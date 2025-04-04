@@ -1,4 +1,4 @@
-// File: utils/mboxParser.js - Improved body parsing
+// File: utils/mboxParser.js - Improved MIME handling
 import { v4 as uuidv4 } from 'uuid';
 
 export async function parseEmails(mboxContent) {
@@ -37,11 +37,92 @@ export async function parseEmails(mboxContent) {
       }
     }));
     
+    // Group emails into conversations
+    const conversations = groupEmailsIntoConversations(emails);
+    
     return emails;
   } catch (error) {
     console.error('Error parsing MBOX file:', error);
     throw error;
   }
+}
+
+// Group emails into conversations by subject
+function groupEmailsIntoConversations(emails) {
+  // Create a Map to group emails by normalized subject
+  const conversationMap = new Map();
+  
+  // Process each email
+  emails.forEach(email => {
+    // Normalize subject by removing prefixes like "Re:", "Fwd:", etc.
+    const normalizedSubject = normalizeSubject(email.subject);
+    
+    // Create or update the conversation group
+    if (!conversationMap.has(normalizedSubject)) {
+      conversationMap.set(normalizedSubject, []);
+    }
+    
+    conversationMap.get(normalizedSubject).push(email);
+  });
+  
+  // Convert the Map to an array of conversation objects
+  const conversationsArray = Array.from(conversationMap.entries()).map(([subject, emails]) => {
+    // Sort emails by date for proper threading
+    const sortedEmails = [...emails].sort((a, b) => {
+      return new Date(a.date) - new Date(b.date);
+    });
+    
+    // Find the earliest email to represent the conversation
+    const firstEmail = sortedEmails[0];
+    
+    return {
+      id: subject, // Use normalized subject as the conversation ID
+      subject: firstEmail.subject, // Use the subject of the first email
+      participants: getUniqueParticipants(sortedEmails),
+      emails: sortedEmails,
+      date: sortedEmails[sortedEmails.length - 1].date, // Use the date of the most recent email
+      count: sortedEmails.length
+    };
+  });
+  
+  // Sort conversations by date (newest first)
+  return conversationsArray.sort((a, b) => new Date(b.date) - new Date(a.date));
+}
+
+// Helper to normalize subject lines
+function normalizeSubject(subject) {
+  if (!subject) return 'No Subject';
+  
+  // Remove prefixes like Re:, RE:, Fwd:, etc. and trim whitespace
+  return subject
+    .replace(/^(Re|RE|FWD|Fwd|Fw|FW)(\[\d+\])?:\s*/g, '')
+    .trim() || 'No Subject';
+}
+
+// Helper to get unique participants in a conversation
+function getUniqueParticipants(emails) {
+  const participants = new Set();
+  
+  emails.forEach(email => {
+    // Extract email addresses
+    const fromEmail = extractEmailAddress(email.from);
+    const toEmails = extractEmailAddress(email.to).split(',').map(e => e.trim());
+    
+    if (fromEmail) participants.add(fromEmail);
+    toEmails.forEach(email => {
+      if (email) participants.add(email);
+    });
+  });
+  
+  return Array.from(participants);
+}
+
+// Helper to extract email address from "Name <email@example.com>" format
+function extractEmailAddress(addressString) {
+  if (!addressString) return '';
+  
+  const match = addressString.match(/<([^>]+)>/);
+  return match ? match[1] : addressString;
 }
 
 function parseEmailMessage(messageContent, index) {
@@ -54,14 +135,15 @@ function parseEmailMessage(messageContent, index) {
       from: 'Unknown Sender',
       to: 'Unknown Recipient',
       subject: `Email #${index + 1}`,
-      date: new Date().toISOString(), // Default to current date
+      date: new Date().toISOString(),
       bodyText: '',
       bodyHtml: '',
       attachments: []
     };
     
-    // First handle the From line specially - it's the MBOX separator
+    // Split message into lines
     const lines = messageContent.split('\n');
+    
     // Skip the first "From " line as it's the MBOX separator
     const headerLines = [];
     let bodyStartIndex = -1;
@@ -140,8 +222,8 @@ function parseEmailMessage(messageContent, index) {
     
     // Extract body content
     if (bodyStartIndex >= 0 && bodyStartIndex < lines.length) {
-      const bodyLines = lines.slice(bodyStartIndex);
-      const bodyContent = bodyLines.join('\n');
+      // Join lines back into a single string for the body
+      const bodyContent = lines.slice(bodyStartIndex).join('\n');
       
       // Parse the body based on content type
       if (contentType.includes('multipart/') && boundary) {
@@ -156,7 +238,7 @@ function parseEmailMessage(messageContent, index) {
         }
       }
       
-      console.log(`Message ${index}: Body extracted, html: ${email.bodyHtml.length > 0}, text: ${email.bodyText.length > 0}`);
+      console.log(`Message ${index}: Body extracted, html: ${email.bodyHtml ? 'yes' : 'no'}, text: ${email.bodyText ? 'yes' : 'no'}`);
     } else {
       console.warn(`Message ${index}: No body content found`);
     }
@@ -178,69 +260,103 @@ function parseEmailMessage(messageContent, index) {
 }
 
 function parseMultipartBody(bodyContent, boundary, email) {
-  console.log(`Parsing multipart body with boundary: ${boundary}`);
-  
   try {
     // Create boundary markers
     const startBoundary = `--${boundary}`;
     const endBoundary = `--${boundary}--`;
     
     // Split by boundary
-    const parts = bodyContent.split(new RegExp(`${startBoundary}\\r?\\n`));
+    const parts = bodyContent.split(new RegExp(`${startBoundary}(?:\\r?\\n|$)`));
     
     // First part is usually empty or contains pre-boundary content
     parts.shift();
     
     // Process each part
-    for (let part of parts) {
+    parts.forEach(part => {
       // Stop if we hit the end boundary
       if (part.includes(endBoundary)) {
         part = part.split(endBoundary)[0];
       }
       
-      // Split part into headers and content
-      const partSplit = part.split(/\r?\n\r?\n/, 2);
-      if (partSplit.length < 2) continue; // Skip if no clear header/content split
+      // Skip empty parts
+      if (!part.trim()) return;
       
-      const partHeaders = partSplit[0];
-      let partContent = partSplit[1];
+      // Split part into headers and content (first empty line separates headers from content)
+      const headerBodySplit = part.split(/\r?\n\r?\n/);
+      if (headerBodySplit.length < 2) return; // No clear split between headers and body
       
-      // Check content type
-      const partTypeMatch = partHeaders.match(/Content-Type:\s*([^;\r\n]+)/i);
-      const partType = partTypeMatch ? partTypeMatch[1].trim().toLowerCase() : 'text/plain';
+      const partHeaders = headerBodySplit[0];
+      // Content is everything after the first empty line
+      const partContent = headerBodySplit.slice(1).join('\n\n');
       
-      // Check transfer encoding
+      // Skip parts without content
+      if (!partContent.trim()) return;
+      
+      // Parse part headers
+      let partType = 'text/plain';
+      let partEncoding = 'quoted-printable';
+      let partDisposition = '';
+      let partFilename = '';
+      
+      // Parse content type
+      const typeMatch = partHeaders.match(/Content-Type:\s*([^;\r\n]+)/i);
+      if (typeMatch) {
+        partType = typeMatch[1].toLowerCase().trim();
+      }
+      
+      // Check if this is a nested multipart
+      const nestedBoundaryMatch = partHeaders.match(/boundary="?([^";]+)"?/i);
+      if (nestedBoundaryMatch && partType.includes('multipart/')) {
+        // Handle nested multipart by recursive call
+        parseMultipartBody(partContent, nestedBoundaryMatch[1].trim(), email);
+        return;
+      }
+      
+      // Parse encoding
       const encodingMatch = partHeaders.match(/Content-Transfer-Encoding:\s*([^;\r\n]+)/i);
-      const encoding = encodingMatch ? encodingMatch[1].trim().toLowerCase() : 'quoted-printable';
+      if (encodingMatch) {
+        partEncoding = encodingMatch[1].toLowerCase().trim();
+      }
       
-      // Check disposition
+      // Parse disposition
       const dispositionMatch = partHeaders.match(/Content-Disposition:\s*([^;\r\n]+)/i);
-      const disposition = dispositionMatch ? dispositionMatch[1].trim().toLowerCase() : '';
+      if (dispositionMatch) {
+        partDisposition = dispositionMatch[1].toLowerCase().trim();
+      }
       
-      // Decode content based on encoding
-      partContent = decodeBody(partContent, encoding);
+      // Parse filename for attachments
+      const filenameMatch = partHeaders.match(/filename="?([^"\r\n;]+)"?/i);
+      if (filenameMatch) {
+        partFilename = filenameMatch[1].trim();
+      }
       
-      if (disposition.includes('attachment')) {
+      // Decode the content
+      const decodedContent = decodeBody(partContent, partEncoding);
+      
+      // Process the part based on its type and disposition
+      if (partDisposition === 'attachment' || filenameMatch) {
         // This is an attachment
-        const filenameMatch = partHeaders.match(/filename="?([^"\r\n;]+)"?/i);
-        const filename = filenameMatch ? filenameMatch[1].trim() : 'attachment.bin';
-        
         email.attachments.push({
-          filename,
+          filename: partFilename || `attachment-${email.attachments.length + 1}`,
           contentType: partType,
-          content: partContent // In a real app we'd properly decode binary content
+          content: decodedContent
         });
       } else {
-        // Body content
-        if (partType.includes('text/plain')) {
-          email.bodyText = partContent;
-        } else if (partType.includes('text/html')) {
-          email.bodyHtml = partContent;
+        // This is email body content
+        if (partType.includes('text/plain') && !email.bodyText) {
+          email.bodyText = decodedContent;
+        } else if (partType.includes('text/html') && !email.bodyHtml) {
+          email.bodyHtml = decodedContent;
         }
       }
-    }
+    });
   } catch (err) {
     console.error('Error parsing multipart body:', err);
+    
+    // Set fallback content
+    if (!email.bodyText && !email.bodyHtml) {
+      email.bodyText = "Error parsing multipart content: " + err.message;
+    }
   }
 }
 
@@ -249,18 +365,20 @@ function decodeBody(content, encoding) {
   
   try {
     if (encoding === 'base64') {
-      // In a browser environment, we can use atob for base64 decoding
+      // For base64, remove whitespace and decode
+      const cleanBase64 = content.replace(/[\r\n\s]/g, '');
       try {
-        return atob(content.replace(/\s/g, ''));
+        return atob(cleanBase64);
       } catch (e) {
         console.warn('Failed to decode base64 content:', e);
         return content;
       }
     } else if (encoding === 'quoted-printable') {
       // Simple quoted-printable decoder
-      return content.replace(/=\r?\n/g, '')
-                   .replace(/=([\dA-F]{2})/gi, (_, hex) => 
-                      String.fromCharCode(parseInt(hex, 16)));
+      return content
+        .replace(/=\r?\n/g, '') // Remove soft line breaks
+        .replace(/=([\dA-F]{2})/gi, (_, hex) => 
+          String.fromCharCode(parseInt(hex, 16)));
     }
   } catch (err) {
     console.error('Error decoding body content:', err);
@@ -271,12 +389,18 @@ function decodeBody(content, encoding) {
 
 function stripHtml(html) {
   if (!html) return '';
+  
   // Simple HTML stripping
-  return html.replace(/<[^>]*>/g, '')
-             .replace(/&nbsp;/g, ' ')
-             .replace(/&amp;/g, '&')
-             .replace(/&lt;/g, '<')
-             .replace(/&gt;/g, '>');
+  return html
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/&nbsp;/g, ' ') // Replace common HTML entities
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(num)) // Replace numeric entities
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .trim();
 }
 
 function decodeHeader(headerValue) {
@@ -291,9 +415,10 @@ function decodeHeader(headerValue) {
           return atob(text);
         } else if (encoding.toUpperCase() === 'Q') {
           // Quoted-printable encoding
-          return text.replace(/_/g, ' ')
-                     .replace(/=([\dA-F]{2})/gi, (_, hex) => 
-                        String.fromCharCode(parseInt(hex, 16)));
+          return text
+            .replace(/_/g, ' ')
+            .replace(/=([\dA-F]{2})/gi, (_, hex) => 
+              String.fromCharCode(parseInt(hex, 16)));
         }
       } catch (err) {
         console.warn('Failed to decode header:', err);

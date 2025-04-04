@@ -8,8 +8,9 @@ import { parseEmails } from '../utils/mboxParser';
 
 export default function Home() {
   const [emails, setEmails] = useState([]);
-  const [filteredEmails, setFilteredEmails] = useState([]);
-  const [selectedEmail, setSelectedEmail] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [filteredConversations, setFilteredConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
@@ -28,9 +29,21 @@ export default function Home() {
         try {
           const content = event.target.result;
           const parsedEmails = await parseEmails(content);
+          
+          // Store original emails
           setEmails(parsedEmails);
-          setFilteredEmails(parsedEmails);
+          
+          // Group emails into conversations
+          const convos = groupEmailsIntoConversations(parsedEmails);
+          setConversations(convos);
+          setFilteredConversations(convos);
+          
           setIsLoading(false);
+          
+          // Auto-select the first conversation if available
+          if (convos.length > 0) {
+            setSelectedConversation(convos[0]);
+          }
         } catch (err) {
           setError('Error parsing MBOX file: ' + err.message);
           setIsLoading(false);
@@ -49,54 +62,163 @@ export default function Home() {
     }
   };
 
+  // Group emails into conversations by subject
+  const groupEmailsIntoConversations = (emails) => {
+    // Create a Map to group emails by normalized subject
+    const conversationMap = new Map();
+    
+    // Process each email
+    emails.forEach(email => {
+      // Normalize subject by removing prefixes like "Re:", "Fwd:", etc.
+      const normalizedSubject = normalizeSubject(email.subject);
+      
+      // Create or update the conversation group
+      if (!conversationMap.has(normalizedSubject)) {
+        conversationMap.set(normalizedSubject, []);
+      }
+      
+      conversationMap.get(normalizedSubject).push(email);
+    });
+    
+    // Convert the Map to an array of conversation objects
+    const conversationsArray = Array.from(conversationMap.entries()).map(([subject, emailsInConvo]) => {
+      // Sort emails by date for proper threading
+      const sortedEmails = [...emailsInConvo].sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+      });
+      
+      // Find the earliest email to represent the conversation
+      const firstEmail = sortedEmails[0];
+      
+      return {
+        id: subject, // Use normalized subject as the conversation ID
+        subject: firstEmail.subject, // Use the subject of the first email
+        participants: getUniqueParticipants(sortedEmails),
+        emails: sortedEmails,
+        date: sortedEmails[sortedEmails.length - 1].date, // Use the date of the most recent email
+        previewText: sortedEmails[sortedEmails.length - 1].bodyText?.slice(0, 100) || '',
+        count: sortedEmails.length,
+        isRead: false // Default to unread
+      };
+    });
+    
+    // Sort conversations by date (newest first)
+    return conversationsArray.sort((a, b) => new Date(b.date) - new Date(a.date));
+  };
+  
+  // Helper to normalize subject lines
+  const normalizeSubject = (subject) => {
+    if (!subject) return 'No Subject';
+    
+    // Remove prefixes like Re:, RE:, Fwd:, etc. and trim whitespace
+    return subject
+      .replace(/^(Re|RE|FWD|Fwd|Fw|FW)(\[\d+\])?:\s*/g, '')
+      .trim() || 'No Subject';
+  };
+  
+  // Helper to get unique participants in a conversation
+  const getUniqueParticipants = (emails) => {
+    const participants = new Set();
+    
+    emails.forEach(email => {
+      // Extract email addresses
+      const fromEmail = extractEmailAddress(email.from);
+      const toEmails = extractEmailAddress(email.to).split(',').map(e => e.trim());
+      
+      if (fromEmail) participants.add(fromEmail);
+      toEmails.forEach(email => {
+        if (email) participants.add(email);
+      });
+    });
+    
+    return Array.from(participants);
+  };
+  
+  // Helper to extract email address from "Name <email@example.com>" format
+  const extractEmailAddress = (addressString) => {
+    if (!addressString) return '';
+    
+    const match = addressString.match(/<([^>]+)>/);
+    return match ? match[1] : addressString;
+  };
+
+  // Handle selecting a conversation
+  const handleSelectConversation = (conversation) => {
+    console.log('Selected conversation:', {
+      id: conversation.id,
+      subject: conversation.subject,
+      emailCount: conversation.emails.length
+    });
+    
+    setSelectedConversation(conversation);
+    
+    // Mark conversation as read
+    setConversations(prevConversations => 
+      prevConversations.map(conv => 
+        conv.id === conversation.id ? {...conv, isRead: true} : conv
+      )
+    );
+    
+    setFilteredConversations(prevConversations => 
+      prevConversations.map(conv => 
+        conv.id === conversation.id ? {...conv, isRead: true} : conv
+      )
+    );
+  };
+
+  // Apply filters from FilterPanel
   const applyFilters = (filters) => {
     const { from, to, subject, searchTerm } = filters;
     
-    let result = [...emails];
-    
-    if (from) {
-      result = result.filter(email => 
-        email.from.toLowerCase().includes(from.toLowerCase())
-      );
-    }
-    
-    if (to) {
-      result = result.filter(email => 
-        email.to.toLowerCase().includes(to.toLowerCase())
-      );
-    }
-    
-    if (subject) {
-      result = result.filter(email => 
-        email.subject.toLowerCase().includes(subject.toLowerCase())
-      );
-    }
+    let result = [...conversations];
     
     if (searchTerm) {
-      result = result.filter(email => 
-        email.from.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        email.to.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        email.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (email.bodyText && email.bodyText.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
+      // Search across all fields
+      result = result.filter(conversation => {
+        const matchesSubject = conversation.subject.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesParticipants = conversation.participants.some(p => 
+          p.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        const matchesContent = conversation.emails.some(email => 
+          email.bodyText && email.bodyText.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        
+        return matchesSubject || matchesParticipants || matchesContent;
+      });
+    } else {
+      // Apply specific filters
+      if (from) {
+        result = result.filter(conversation => 
+          conversation.participants.some(p => p.toLowerCase().includes(from.toLowerCase()))
+        );
+      }
+      
+      if (to) {
+        result = result.filter(conversation => 
+          conversation.participants.some(p => p.toLowerCase().includes(to.toLowerCase()))
+        );
+      }
+      
+      if (subject) {
+        result = result.filter(conversation => 
+          conversation.subject.toLowerCase().includes(subject.toLowerCase())
+        );
+      }
     }
     
-    setFilteredEmails(result);
+    setFilteredConversations(result);
   };
 
+  // Show conversation between specific participants
   const showConversation = (from, to) => {
     if (!from && !to) return;
     
-    const conversation = emails.filter(email => {
-      const isFromSender = from && email.from.toLowerCase().includes(from.toLowerCase());
-      const isToRecipient = to && email.to.toLowerCase().includes(to.toLowerCase());
-      const isFromRecipient = to && email.from.toLowerCase().includes(to.toLowerCase());
-      const isToSender = from && email.to.toLowerCase().includes(from.toLowerCase());
-      
-      return (isFromSender && isToRecipient) || (isFromRecipient && isToSender);
+    const result = conversations.filter(conversation => {
+      return conversation.participants.some(p => p.toLowerCase().includes(from?.toLowerCase() || '')) &&
+             conversation.participants.some(p => p.toLowerCase().includes(to?.toLowerCase() || ''));
     });
     
-    setFilteredEmails(conversation);
+    setFilteredConversations(result);
   };
 
   return (
@@ -140,22 +262,25 @@ export default function Home() {
             <div className="loader"></div>
             <p className="ml-2">Processing MBOX file...</p>
           </div>
-        ) : emails.length > 0 ? (
+        ) : conversations.length > 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
               <FilterPanel onApplyFilters={applyFilters} onShowConversation={showConversation} />
               <EmailList 
-                emails={filteredEmails} 
-                onSelectEmail={setSelectedEmail} 
-                selectedEmailId={selectedEmail?.id} 
+                conversations={filteredConversations}
+                onSelectConversation={handleSelectConversation}
+                selectedConversationId={selectedConversation?.id}
               />
             </div>
             <div className="lg:col-span-2">
-              {selectedEmail ? (
-                <EmailView email={selectedEmail} />
+              {selectedConversation ? (
+                <EmailView 
+                  key={selectedConversation.id}
+                  conversation={selectedConversation} 
+                />
               ) : (
                 <div className="bg-white shadow rounded p-6 h-full flex items-center justify-center">
-                  <p className="text-gray-500">Select an email to view its contents</p>
+                  <p className="text-gray-500">Select a conversation to view emails</p>
                 </div>
               )}
             </div>
