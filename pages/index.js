@@ -14,6 +14,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -275,6 +276,11 @@ export default function Home() {
     setFilteredConversations(conversations);
   };
 
+  // Toggle filter panel visibility
+  const toggleFilters = () => {
+    setShowFilters(!showFilters);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Head>
@@ -317,79 +323,106 @@ export default function Home() {
             <p className="ml-2">Processing MBOX file...</p>
           </div>
         ) : conversations.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-1">
-              {/* Single search box */}
-              <div className="bg-white shadow rounded p-4 mb-4">
-                <h2 className="text-lg font-medium text-gray-900 mb-3">Search</h2>
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Search across all emails"
-                    className="w-full block border border-gray-300 rounded-md shadow-sm py-2 pl-10 pr-4 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                    value={currentSearchTerm}
-                    onChange={(e) => setCurrentSearchTerm(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSearch(currentSearchTerm)}
-                  />
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </span>
-                  {currentSearchTerm && (
+          <div className="space-y-6">
+            {/* Search and Filter Section - Full Width */}
+            <div className="bg-white shadow rounded p-4">
+              <div className="flex flex-col space-y-4">
+                {/* Search Box */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-medium text-gray-900">Search</h2>
                     <button
-                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
-                      onClick={clearSearch}
+                      onClick={toggleFilters}
+                      className="text-sm text-blue-600 hover:text-blue-800 flex items-center"
                     >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      {showFilters ? 'Hide Filters' : 'Show Filters'}
+                      <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 ml-1 transition-transform ${showFilters ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search across all emails"
+                      className="w-full block border border-gray-300 rounded-md shadow-sm py-2 pl-10 pr-4 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      value={currentSearchTerm}
+                      onChange={(e) => setCurrentSearchTerm(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSearch(currentSearchTerm)}
+                    />
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </span>
+                    {currentSearchTerm && (
+                      <button
+                        className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+                        onClick={clearSearch}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleSearch(currentSearchTerm)}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Search
+                    </button>
+                  </div>
+                  
+                  {currentSearchTerm && (
+                    <div className="mt-3 text-sm text-gray-600">
+                      Found {filteredConversations.length} 
+                      {filteredConversations.length === 1 ? ' result' : ' results'} 
+                      for "<span className="font-medium">{currentSearchTerm}</span>"
+                    </div>
                   )}
                 </div>
-                <div className="mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => handleSearch(currentSearchTerm)}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    Search
-                  </button>
-                </div>
                 
-                {currentSearchTerm && (
-                  <div className="mt-3 text-sm text-gray-600">
-                    Found {filteredConversations.length} 
-                    {filteredConversations.length === 1 ? ' result' : ' results'} 
-                    for "<span className="font-medium">{currentSearchTerm}</span>"
+                {/* Advanced Filters - Collapsible */}
+                {showFilters && (
+                  <div className="pt-4 border-t border-gray-200">
+                    <FilterPanel 
+                      onApplyFilters={applyFilters} 
+                      onShowConversation={showConversation}
+                    />
                   </div>
                 )}
               </div>
-              
-              <FilterPanel 
-                onApplyFilters={applyFilters} 
-                onShowConversation={showConversation}
-              />
-              
-              <EmailList 
-                conversations={filteredConversations}
-                onSelectConversation={handleSelectConversation}
-                selectedConversationId={selectedConversation?.id}
-                searchTerm={currentSearchTerm}
-              />
             </div>
-            <div className="lg:col-span-2">
-              {selectedConversation ? (
-                <EmailView 
-                  key={selectedConversation.id}
-                  conversation={selectedConversation} 
+            
+            {/* Email List and Viewer Section - Side by Side */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Email List - 1/3 width on medium screens and up */}
+              <div className="md:col-span-1">
+                <EmailList 
+                  conversations={filteredConversations}
+                  onSelectConversation={handleSelectConversation}
+                  selectedConversationId={selectedConversation?.id}
                   searchTerm={currentSearchTerm}
                 />
-              ) : (
-                <div className="bg-white shadow rounded p-6 h-full flex items-center justify-center">
-                  <p className="text-gray-500">Select a conversation to view emails</p>
-                </div>
-              )}
+              </div>
+              
+              {/* Email Viewer - 2/3 width on medium screens and up */}
+              <div className="md:col-span-2">
+                {selectedConversation ? (
+                  <EmailView 
+                    key={selectedConversation.id}
+                    conversation={selectedConversation} 
+                    searchTerm={currentSearchTerm}
+                  />
+                ) : (
+                  <div className="bg-white shadow rounded p-6 h-full flex items-center justify-center">
+                    <p className="text-gray-500">Select a conversation to view emails</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : (
