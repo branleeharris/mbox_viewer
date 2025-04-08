@@ -1,9 +1,10 @@
-// File: pages/index.js
+// File: pages/index.js (modified)
 import { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 import EmailList from '../components/EmailList';
 import EmailView from '../components/EmailView';
 import FilterPanel from '../components/FilterPanel';
+import MboxMerger from '../components/MboxMerger';
 import { parseEmails } from '../utils/mboxParser';
 
 export default function Home() {
@@ -15,6 +16,7 @@ export default function Home() {
   const [error, setError] = useState('');
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [showMergeTools, setShowMergeTools] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = async (e) => {
@@ -26,6 +28,15 @@ export default function Home() {
       const file = e.target.files[0];
       if (!file) return;
       
+      processFile(file);
+    } catch (err) {
+      setError('Error processing file: ' + err.message);
+      setIsLoading(false);
+    }
+  };
+
+  const processFile = async (file) => {
+    try {
       const reader = new FileReader();
       
       reader.onload = async (event) => {
@@ -65,7 +76,18 @@ export default function Home() {
     }
   };
 
-  // Group emails into conversations by subject
+  // Handle merged file ready event
+  const handleMergedFileReady = (mergedBlob, mergedFileName) => {
+    // Create a File object from the Blob
+    const file = new File([mergedBlob], mergedFileName, { type: 'text/plain' });
+    
+    // Ask user if they want to load the merged file
+    if (window.confirm('Would you like to load the merged file into the viewer?')) {
+      processFile(file);
+    }
+  };
+
+  // Group emails into conversations by subject (same as before)
   const groupEmailsIntoConversations = (emails) => {
     // Create a Map to group emails by normalized subject
     const conversationMap = new Map();
@@ -108,8 +130,8 @@ export default function Home() {
     // Sort conversations by date (newest first)
     return conversationsArray.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
-  
-  // Helper to normalize subject lines
+
+  // Helper functions (same as before)
   const normalizeSubject = (subject) => {
     if (!subject) return 'No Subject';
     
@@ -119,7 +141,6 @@ export default function Home() {
       .trim() || 'No Subject';
   };
   
-  // Helper to get unique participants in a conversation
   const getUniqueParticipants = (emails) => {
     const participants = new Set();
     
@@ -137,7 +158,6 @@ export default function Home() {
     return Array.from(participants);
   };
   
-  // Helper to extract email address from "Name <email@example.com>" format
   const extractEmailAddress = (addressString) => {
     if (!addressString) return '';
     
@@ -145,14 +165,8 @@ export default function Home() {
     return match ? match[1] : addressString;
   };
 
-  // Handle selecting a conversation
+  // Other function handlers (same as before)
   const handleSelectConversation = (conversation) => {
-    console.log('Selected conversation:', {
-      id: conversation.id,
-      subject: conversation.subject,
-      emailCount: conversation.emails.length
-    });
-    
     setSelectedConversation(conversation);
     
     // Mark conversation as read
@@ -169,7 +183,6 @@ export default function Home() {
     );
   };
 
-  // Handle search function
   const handleSearch = (searchTerm) => {
     setCurrentSearchTerm(searchTerm);
     
@@ -215,7 +228,6 @@ export default function Home() {
     }
   };
 
-  // Apply filters from FilterPanel
   const applyFilters = (filters) => {
     const { from, to, subject } = filters;
     
@@ -258,7 +270,6 @@ export default function Home() {
     setFilteredConversations(result);
   };
 
-  // Show conversation between specific participants
   const showConversation = (from, to) => {
     if (!from && !to) return;
     
@@ -270,15 +281,17 @@ export default function Home() {
     setFilteredConversations(result);
   };
 
-  // Clear search
   const clearSearch = () => {
     setCurrentSearchTerm('');
     setFilteredConversations(conversations);
   };
 
-  // Toggle filter panel visibility
   const toggleFilters = () => {
     setShowFilters(!showFilters);
+  };
+
+  const toggleMergeTools = () => {
+    setShowMergeTools(!showMergeTools);
   };
 
   return (
@@ -292,7 +305,13 @@ export default function Home() {
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">BH MBOX Viewer</h1>
-          <div>
+          <div className="flex space-x-3">
+            <button
+              onClick={toggleMergeTools}
+              className="bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 px-4 rounded mr-2"
+            >
+              {showMergeTools ? 'Hide Merge Tools' : 'Merge MBOX Files'}
+            </button>
             <input
               type="file"
               accept=".mbox"
@@ -314,6 +333,13 @@ export default function Home() {
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
             {error}
+          </div>
+        )}
+        
+        {/* MBOX Merger Component - Collapsible */}
+        {showMergeTools && (
+          <div className="mb-6">
+            <MboxMerger onMergedFileReady={handleMergedFileReady} />
           </div>
         )}
         
@@ -428,7 +454,7 @@ export default function Home() {
         ) : (
           <div className="bg-white shadow rounded p-6 text-center">
             <h2 className="text-xl font-semibold mb-4">Welcome to MBOX Viewer</h2>
-            <p className="mb-6">Open an MBOX file to get started.</p>
+            <p className="mb-6">Open an MBOX file to get started or merge multiple MBOX files.</p>
             <p className="text-sm text-gray-500 mb-2">All processing happens in your browser.</p>
             <p className="text-sm text-gray-500">Your data never leaves your computer.</p>
           </div>
