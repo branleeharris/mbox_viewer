@@ -1,4 +1,4 @@
-// File: utils/mboxParser.js - Improved MIME handling
+// File: utils/mboxParser.js - Improved MIME handling with enhanced character encoding fixes
 import { v4 as uuidv4 } from 'uuid';
 
 export async function parseEmails(mboxContent) {
@@ -176,6 +176,7 @@ function parseEmailMessage(messageContent, index) {
     let contentType = 'text/plain';
     let boundary = null;
     let contentTransferEncoding = null;
+    let charset = 'utf-8'; // Default charset
     
     headerLines.forEach(line => {
       // Header format: Name: Value
@@ -209,6 +210,12 @@ function parseEmailMessage(messageContent, index) {
           contentType = contentTypeMatch[1].toLowerCase().trim();
         }
         
+        // Extract charset if present
+        const charsetMatch = headerValue.match(/charset="?([^";]+)"?/i);
+        if (charsetMatch) {
+          charset = charsetMatch[1].trim();
+        }
+        
         // Extract boundary if present
         const boundaryMatch = headerValue.match(/boundary="?([^";]+)"?/i);
         if (boundaryMatch) {
@@ -227,14 +234,14 @@ function parseEmailMessage(messageContent, index) {
       
       // Parse the body based on content type
       if (contentType.includes('multipart/') && boundary) {
-        parseMultipartBody(bodyContent, boundary, email);
+        parseMultipartBody(bodyContent, boundary, email, charset);
       } else {
         // Single part message
         if (contentType.includes('text/html')) {
-          email.bodyHtml = decodeBody(bodyContent, contentTransferEncoding);
+          email.bodyHtml = decodeBody(bodyContent, contentTransferEncoding, charset);
           email.bodyText = stripHtml(email.bodyHtml);
         } else {
-          email.bodyText = decodeBody(bodyContent, contentTransferEncoding);
+          email.bodyText = decodeBody(bodyContent, contentTransferEncoding, charset);
         }
       }
       
@@ -252,6 +259,14 @@ function parseEmailMessage(messageContent, index) {
       email.bodyText = "No readable content found in this email.";
     }
     
+    // Final cleanup for non-breaking spaces and other encoding issues
+    if (email.bodyText) {
+      email.bodyText = cleanupEncodingIssues(email.bodyText);
+    }
+    if (email.bodyHtml) {
+      email.bodyHtml = cleanupEncodingIssues(email.bodyHtml);
+    }
+    
     return email;
   } catch (error) {
     console.error(`Error parsing message ${index}:`, error);
@@ -259,7 +274,7 @@ function parseEmailMessage(messageContent, index) {
   }
 }
 
-function parseMultipartBody(bodyContent, boundary, email) {
+function parseMultipartBody(bodyContent, boundary, email, parentCharset) {
   try {
     // Create boundary markers
     const startBoundary = `--${boundary}`;
@@ -297,6 +312,7 @@ function parseMultipartBody(bodyContent, boundary, email) {
       let partEncoding = 'quoted-printable';
       let partDisposition = '';
       let partFilename = '';
+      let partCharset = parentCharset || 'utf-8'; // Inherit parent's charset if available
       
       // Parse content type
       const typeMatch = partHeaders.match(/Content-Type:\s*([^;\r\n]+)/i);
@@ -304,11 +320,17 @@ function parseMultipartBody(bodyContent, boundary, email) {
         partType = typeMatch[1].toLowerCase().trim();
       }
       
+      // Parse charset
+      const charsetMatch = partHeaders.match(/charset="?([^";]+)"?/i);
+      if (charsetMatch) {
+        partCharset = charsetMatch[1].trim();
+      }
+      
       // Check if this is a nested multipart
       const nestedBoundaryMatch = partHeaders.match(/boundary="?([^";]+)"?/i);
       if (nestedBoundaryMatch && partType.includes('multipart/')) {
         // Handle nested multipart by recursive call
-        parseMultipartBody(partContent, nestedBoundaryMatch[1].trim(), email);
+        parseMultipartBody(partContent, nestedBoundaryMatch[1].trim(), email, partCharset);
         return;
       }
       
@@ -330,8 +352,11 @@ function parseMultipartBody(bodyContent, boundary, email) {
         partFilename = filenameMatch[1].trim();
       }
       
-      // Decode the content
-      const decodedContent = decodeBody(partContent, partEncoding);
+      // Decode the content with proper charset
+      let decodedContent = decodeBody(partContent, partEncoding, partCharset);
+      
+      // Apply final cleanup
+      decodedContent = cleanupEncodingIssues(decodedContent);
       
       // Process the part based on its type and disposition
       if (partDisposition === 'attachment' || filenameMatch) {
@@ -360,31 +385,171 @@ function parseMultipartBody(bodyContent, boundary, email) {
   }
 }
 
-function decodeBody(content, encoding) {
+function decodeBody(content, encoding, charset = 'utf-8') {
   if (!content) return '';
   
   try {
+    // Normalize charset name
+    charset = normalizeCharset(charset);
+    
     if (encoding === 'base64') {
       // For base64, remove whitespace and decode
       const cleanBase64 = content.replace(/[\r\n\s]/g, '');
       try {
-        return atob(cleanBase64);
+        // Decode base64 to bytes
+        const binaryStr = atob(cleanBase64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        
+        // Use TextDecoder for charset conversion with a fallback
+        try {
+          if (typeof TextDecoder !== 'undefined') {
+            return new TextDecoder(charset).decode(bytes);
+          } else {
+            // Fallback for environments without TextDecoder
+            return binaryStr;
+          }
+        } catch (e) {
+          // Fallback to UTF-8 if the charset is not supported
+          console.warn(`Charset ${charset} not supported, falling back to UTF-8`);
+          if (typeof TextDecoder !== 'undefined') {
+            return new TextDecoder('utf-8').decode(bytes);
+          } else {
+            return binaryStr;
+          }
+        }
       } catch (e) {
         console.warn('Failed to decode base64 content:', e);
         return content;
       }
     } else if (encoding === 'quoted-printable') {
-      // Simple quoted-printable decoder
-      return content
+      // Decode quoted-printable
+      let decoded = content
         .replace(/=\r?\n/g, '') // Remove soft line breaks
         .replace(/=([\dA-F]{2})/gi, (_, hex) => 
           String.fromCharCode(parseInt(hex, 16)));
+      
+      // For non-UTF-8 charsets, we need to handle the bytes properly
+      if (charset !== 'utf-8') {
+        try {
+          if (typeof TextDecoder !== 'undefined') {
+            // Convert to bytes
+            const bytes = new Uint8Array(decoded.length);
+            for (let i = 0; i < decoded.length; i++) {
+              bytes[i] = decoded.charCodeAt(i) & 0xFF;
+            }
+            
+            // Use TextDecoder to convert bytes to proper encoding
+            return new TextDecoder(charset).decode(bytes);
+          }
+        } catch (e) {
+          console.warn(`Error decoding with charset ${charset}:`, e);
+        }
+      }
+      
+      return decoded;
     }
+    
+    // For 7bit, 8bit, or binary encodings - try to handle charset
+    if (charset !== 'utf-8' && typeof TextDecoder !== 'undefined') {
+      try {
+        // Convert to bytes
+        const bytes = new Uint8Array(content.length);
+        for (let i = 0; i < content.length; i++) {
+          bytes[i] = content.charCodeAt(i) & 0xFF;
+        }
+        
+        // Use TextDecoder for charset conversion
+        return new TextDecoder(charset).decode(bytes);
+      } catch (e) {
+        console.warn(`Error decoding with charset ${charset}:`, e);
+      }
+    }
+    
+    // Return original content if no conversions applied
+    return content;
   } catch (err) {
     console.error('Error decoding body content:', err);
+    return content;
   }
+}
+
+function decodeHeader(headerValue) {
+  if (!headerValue) return '';
   
-  return content;
+  try {
+    // Handle encoded-word format (e.g. =?UTF-8?Q?Subject?=)
+    return headerValue.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_, charset, encoding, text) => {
+      try {
+        // Normalize charset name
+        charset = normalizeCharset(charset);
+        
+        if (encoding.toUpperCase() === 'B') {
+          // Base64 encoding
+          try {
+            // Decode base64 to bytes
+            const binaryStr = atob(text);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+              bytes[i] = binaryStr.charCodeAt(i);
+            }
+            
+            // Use TextDecoder for charset conversion
+            try {
+              if (typeof TextDecoder !== 'undefined') {
+                return new TextDecoder(charset).decode(bytes);
+              } else {
+                return binaryStr;
+              }
+            } catch (e) {
+              // Fallback to UTF-8 if the charset is not supported
+              console.warn(`Charset ${charset} not supported in header, falling back to UTF-8`);
+              if (typeof TextDecoder !== 'undefined') {
+                return new TextDecoder('utf-8').decode(bytes);
+              } else {
+                return binaryStr;
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to decode base64 header content:', e);
+            return text;
+          }
+        } else if (encoding.toUpperCase() === 'Q') {
+          // Quoted-printable encoding
+          let decoded = text
+            .replace(/_/g, ' ')
+            .replace(/=([\dA-F]{2})/gi, (_, hex) => 
+              String.fromCharCode(parseInt(hex, 16)));
+          
+          // For non-UTF-8 charsets, we need to handle the bytes properly
+          if (charset !== 'utf-8' && typeof TextDecoder !== 'undefined') {
+            try {
+              // Convert to bytes
+              const bytes = new Uint8Array(decoded.length);
+              for (let i = 0; i < decoded.length; i++) {
+                bytes[i] = decoded.charCodeAt(i) & 0xFF;
+              }
+              
+              // Use TextDecoder to convert bytes to proper encoding
+              return new TextDecoder(charset).decode(bytes);
+            } catch (e) {
+              console.warn(`Error decoding header with charset ${charset}:`, e);
+            }
+          }
+          
+          return decoded;
+        }
+      } catch (err) {
+        console.warn('Failed to decode header:', err);
+      }
+      return text;
+    });
+  } catch (err) {
+    console.error('Error decoding header:', err);
+    return headerValue;
+  }
 }
 
 function stripHtml(html) {
@@ -403,30 +568,54 @@ function stripHtml(html) {
     .trim();
 }
 
-function decodeHeader(headerValue) {
-  if (!headerValue) return '';
+// New helper function to normalize charset names
+function normalizeCharset(charset) {
+  if (!charset) return 'utf-8';
   
-  try {
-    // Handle encoded-word format (e.g. =?UTF-8?Q?Subject?=)
-    return headerValue.replace(/=\?([^?]+)\?([BQ])\?([^?]*)\?=/gi, (_, charset, encoding, text) => {
-      try {
-        if (encoding.toUpperCase() === 'B') {
-          // Base64 encoding
-          return atob(text);
-        } else if (encoding.toUpperCase() === 'Q') {
-          // Quoted-printable encoding
-          return text
-            .replace(/_/g, ' ')
-            .replace(/=([\dA-F]{2})/gi, (_, hex) => 
-              String.fromCharCode(parseInt(hex, 16)));
-        }
-      } catch (err) {
-        console.warn('Failed to decode header:', err);
-      }
-      return text;
-    });
-  } catch (err) {
-    console.error('Error decoding header:', err);
-    return headerValue;
-  }
+  // Convert to lowercase
+  charset = charset.toLowerCase();
+  
+  // Handle common charset aliases
+  const charsetMap = {
+    'windows-1252': 'windows-1252',
+    'cp1252': 'windows-1252',
+    'iso-8859-1': 'iso-8859-1',
+    'latin1': 'iso-8859-1',
+    'us-ascii': 'ascii',
+    'ascii': 'ascii',
+    'utf8': 'utf-8',
+    'utf-8': 'utf-8'
+  };
+  
+  return charsetMap[charset] || 'utf-8';
+}
+
+// New helper function to clean up common encoding issues
+function cleanupEncodingIssues(text) {
+  if (!text) return '';
+  
+  // Fix common encoding issues
+  return text
+    // Fix the "Â" non-breaking space issue (very common encoding error)
+    .replace(/Â /g, ' ')
+    .replace(/Â/g, '')
+    // Fix other common encoding issues using Unicode escape sequences
+    .replace(/â€œ/g, '"')
+    .replace(/â€/g, '"')
+    .replace(/â€˜/g, '\u2018') // Left single quote
+    .replace(/â€™/g, '\u2019') // Right single quote
+    .replace(/â€"/g, '\u2014') // Em dash
+    .replace(/â€"/g, '\u2013') // En dash
+    .replace(/â€¦/g, '\u2026') // Ellipsis
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã¨/g, 'è')
+    .replace(/Ã«/g, 'ë')
+    .replace(/Ã¯/g, 'ï')
+    .replace(/Ã®/g, 'î')
+    .replace(/Ã´/g, 'ô')
+    .replace(/Ã¹/g, 'ù')
+    .replace(/Ã»/g, 'û')
+    .replace(/Ã§/g, 'ç')
+    .replace(/Ã€/g, 'À')
+    .replace(/Ã‰/g, 'É')
 }
