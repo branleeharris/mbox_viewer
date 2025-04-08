@@ -293,6 +293,110 @@ export default function EmailView({ conversation, searchTerm }) {
     printWindow.document.close();
   };
   
+  // Print the entire conversation
+  const handlePrintConversation = () => {
+    const printWindow = window.open('', '_blank');
+    
+    if (!printWindow) {
+      alert('Please allow pop-ups to print emails');
+      return;
+    }
+    
+    // Start building the HTML content for the print window
+    let htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Conversation: ${conversation.subject}</title>
+        <meta charset="UTF-8">
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }
+          .conversation-container { max-width: 800px; margin: 0 auto; }
+          .conversation-header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 30px; }
+          .email { border: 1px solid #ddd; padding: 20px; margin-bottom: 30px; border-radius: 8px; }
+          .email-header { border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
+          .email-header-item { margin-bottom: 5px; }
+          .label { font-weight: bold; width: 60px; display: inline-block; }
+          .email-body { margin-top: 15px; }
+          .email-separator { height: 20px; }
+          .print-footer { text-align: center; color: #666; margin-top: 30px; font-size: 12px; }
+          @media print {
+            body { margin: 0; }
+            .no-print { display: none; }
+            .email { break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="conversation-container">
+          <div class="conversation-header">
+            <h1>${conversation.subject}</h1>
+            <p>${conversation.emails?.length || 0} messages in this conversation</p>
+            <p>Between: ${conversation.participants?.join(', ') || 'Unknown'}</p>
+          </div>
+    `;
+    
+    // Add each email in the conversation
+    if (conversation.emails && conversation.emails.length > 0) {
+      // Sort emails by date (oldest first for printing)
+      const sortedEmails = [...conversation.emails].sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+      });
+      
+      sortedEmails.forEach((email, index) => {
+        const content = cleanEmailContent(email);
+        
+        htmlContent += `
+          <div class="email">
+            <div class="email-header">
+              <div class="email-header-item"><span class="label">From:</span> ${email.from}</div>
+              <div class="email-header-item"><span class="label">To:</span> ${email.to}</div>
+              <div class="email-header-item"><span class="label">Date:</span> ${formatDate(email.date)}</div>
+            </div>
+            
+            <div class="email-body">
+              ${email.bodyHtml ? content.html : content.text.replace(/\n/g, '<br>')}
+            </div>
+            
+            ${email.attachments && email.attachments.length > 0 ? `
+              <div class="email-attachments" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                <h3>Attachments</h3>
+                <ul>
+                  ${email.attachments.map(att => `<li>${att.filename} (${att.contentType})</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+          </div>
+          ${index < sortedEmails.length - 1 ? `<div class="email-separator"></div>` : ''}
+        `;
+      });
+    }
+    
+    // Close the HTML content
+    htmlContent += `
+        </div>
+        
+        <div class="print-footer">
+          <p>Printed from MBOX Viewer</p>
+          <button class="no-print" onclick="window.print()">Print</button>
+          <button class="no-print" onclick="window.close()">Close</button>
+        </div>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 500);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+    
+    // Write the content to the print window
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
+  
   // Save attachment
   const handleSaveAttachment = (attachment) => {
     if (!attachment.content) {
@@ -313,32 +417,47 @@ export default function EmailView({ conversation, searchTerm }) {
 
   return (
     <div className="bg-white shadow rounded overflow-hidden">
-      {/* Conversation header */}
+      {/* Conversation header with print conversation button */}
       <div className="px-6 py-4 border-b border-gray-200">
-        <h2 className="text-xl font-semibold">
-          {searchTerm ? (
-            <span dangerouslySetInnerHTML={{ 
-              __html: highlightText(conversation.subject) 
-            }} />
-          ) : conversation.subject}
-        </h2>
-        
-        <div className="mt-2 flex items-center text-sm text-gray-500">
-          <span className="bg-blue-100 text-blue-800 rounded-full px-2 py-0.5 text-xs font-medium mr-2">
-            {conversation.emails?.length || 0} messages
-          </span>
-          <span>
-            Between: {conversation.participants?.slice(0, 3).join(', ') || 'Unknown'}
-            {conversation.participants && conversation.participants.length > 3 && ' and others'}
-          </span>
-        </div>
-        
-        {searchTerm && (
-          <div className="mt-2 bg-yellow-50 border border-yellow-100 rounded px-3 py-1.5 text-sm">
-            <span className="font-medium">Search term: </span>
-            <span className="bg-yellow-200 px-1 py-0.5 rounded">{searchTerm}</span>
+        <div className="flex justify-between items-start">
+          <div>
+            <h2 className="text-xl font-semibold">
+              {searchTerm ? (
+                <span dangerouslySetInnerHTML={{ 
+                  __html: highlightText(conversation.subject) 
+                }} />
+              ) : conversation.subject}
+            </h2>
+            
+            <div className="mt-2 flex items-center text-sm text-gray-500">
+              <span className="bg-blue-100 text-blue-800 rounded-full px-2 py-0.5 text-xs font-medium mr-2">
+                {conversation.emails?.length || 0} messages
+              </span>
+              <span>
+                Between: {conversation.participants?.slice(0, 3).join(', ') || 'Unknown'}
+                {conversation.participants && conversation.participants.length > 3 && ' and others'}
+              </span>
+            </div>
+            
+            {searchTerm && (
+              <div className="mt-2 bg-yellow-50 border border-yellow-100 rounded px-3 py-1.5 text-sm">
+                <span className="font-medium">Search term: </span>
+                <span className="bg-yellow-200 px-1 py-0.5 rounded">{searchTerm}</span>
+              </div>
+            )}
           </div>
-        )}
+          
+          {/* Print conversation button */}
+          <button
+            onClick={handlePrintConversation}
+            className="flex items-center px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+            </svg>
+            Print Conversation
+          </button>
+        </div>
       </div>
       
       {/* Email thread */}
