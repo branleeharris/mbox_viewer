@@ -1,7 +1,7 @@
 // File: components/EmailListItem.js
 import React from 'react';
 
-export default function EmailListItem({ email, onClick, isSelected, onStar }) {
+export default function EmailListItem({ email, onClick, isSelected, onStar, searchTerm }) {
   // Function to generate a color based on email sender (for avatar)
   const generateColor = (str) => {
     let hash = 0;
@@ -35,6 +35,28 @@ export default function EmailListItem({ email, onClick, isSelected, onStar }) {
     } catch (e) {
       return '';
     }
+  };
+
+  // Function to safely highlight text matched by search term
+  const highlightText = (text) => {
+    if (!searchTerm || !text) return text;
+    
+    // Escape special characters in search term for regex
+    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escapedSearchTerm})`, 'gi');
+    
+    // Split text by search term and wrap matches in highlight spans
+    const parts = text.split(regex);
+    
+    return (
+      <>
+        {parts.map((part, i) => 
+          regex.test(part) ? 
+            <mark key={i} className="bg-yellow-200 px-0.5 rounded">{part}</mark> : 
+            <span key={i}>{part}</span>
+        )}
+      </>
+    );
   };
 
   return (
@@ -74,13 +96,19 @@ export default function EmailListItem({ email, onClick, isSelected, onStar }) {
       <div className="flex-grow min-w-0">
         <div className="flex items-baseline">
           <h3 className={`text-sm truncate ${!email.isRead && 'font-semibold'}`}>
-            {email.from.split('<')[0].trim()}
+            {searchTerm ? 
+              highlightText(email.from.split('<')[0].trim()) : 
+              email.from.split('<')[0].trim()}
           </h3>
           <span className="ml-auto text-xs text-gray-500 flex-shrink-0">{formatDate()}</span>
         </div>
-        <h4 className="text-sm font-medium truncate">{email.subject}</h4>
+        <h4 className="text-sm font-medium truncate">
+          {searchTerm ? highlightText(email.subject) : email.subject}
+        </h4>
         <p className="text-xs text-gray-500 truncate">
-          {email.bodyText?.slice(0, 100).trim() || 'No content'}
+          {searchTerm ? 
+            highlightText(email.bodyText?.slice(0, 100).trim() || 'No content') : 
+            (email.bodyText?.slice(0, 100).trim() || 'No content')}
           {email.conversationCount > 1 && (
             <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
               {email.conversationCount}

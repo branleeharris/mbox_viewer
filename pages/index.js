@@ -13,11 +13,13 @@ export default function Home() {
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [currentSearchTerm, setCurrentSearchTerm] = useState('');
   const fileInputRef = useRef(null);
 
   const handleFileSelect = async (e) => {
     setIsLoading(true);
     setError('');
+    setCurrentSearchTerm(''); // Reset search term when new file is loaded
     
     try {
       const file = e.target.files[0];
@@ -166,44 +168,90 @@ export default function Home() {
     );
   };
 
+  // Handle search function
+  const handleSearch = (searchTerm) => {
+    setCurrentSearchTerm(searchTerm);
+    
+    if (!searchTerm.trim()) {
+      // If search is cleared, reset to current filtered state
+      applyFilters({});
+      return;
+    }
+    
+    // Search across all fields
+    const result = conversations.filter(conversation => {
+      // Check subject
+      const matchesSubject = conversation.subject.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      // Check participants
+      const matchesParticipants = conversation.participants.some(p => 
+        p.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      
+      // Check content of all emails in the conversation
+      const matchesContent = conversation.emails.some(email => {
+        const bodyMatches = email.bodyText && 
+          email.bodyText.toLowerCase().includes(searchTerm.toLowerCase());
+        const fromMatches = email.from && 
+          email.from.toLowerCase().includes(searchTerm.toLowerCase());
+        const toMatches = email.to && 
+          email.to.toLowerCase().includes(searchTerm.toLowerCase());
+        
+        return bodyMatches || fromMatches || toMatches;
+      });
+      
+      return matchesSubject || matchesParticipants || matchesContent;
+    });
+    
+    setFilteredConversations(result);
+    
+    // If we have search results and no conversation is selected, select the first one
+    if (result.length > 0 && !selectedConversation) {
+      setSelectedConversation(result[0]);
+    } else if (result.length > 0 && !result.find(c => c.id === selectedConversation.id)) {
+      // If current selection is not in search results, select the first result
+      setSelectedConversation(result[0]);
+    }
+  };
+
   // Apply filters from FilterPanel
   const applyFilters = (filters) => {
-    const { from, to, subject, searchTerm } = filters;
+    const { from, to, subject } = filters;
     
     let result = [...conversations];
     
-    if (searchTerm) {
-      // Search across all fields
+    // Apply specific filters if they exist
+    if (from) {
+      result = result.filter(conversation => 
+        conversation.participants.some(p => p.toLowerCase().includes(from.toLowerCase()))
+      );
+    }
+    
+    if (to) {
+      result = result.filter(conversation => 
+        conversation.participants.some(p => p.toLowerCase().includes(to.toLowerCase()))
+      );
+    }
+    
+    if (subject) {
+      result = result.filter(conversation => 
+        conversation.subject.toLowerCase().includes(subject.toLowerCase())
+      );
+    }
+    
+    // If search term is active, filter the results by that too
+    if (currentSearchTerm) {
       result = result.filter(conversation => {
-        const matchesSubject = conversation.subject.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSubject = conversation.subject.toLowerCase().includes(currentSearchTerm.toLowerCase());
         const matchesParticipants = conversation.participants.some(p => 
-          p.toLowerCase().includes(searchTerm.toLowerCase())
+          p.toLowerCase().includes(currentSearchTerm.toLowerCase())
         );
         const matchesContent = conversation.emails.some(email => 
-          email.bodyText && email.bodyText.toLowerCase().includes(searchTerm.toLowerCase())
+          email.bodyText && email.bodyText.toLowerCase().includes(currentSearchTerm.toLowerCase())
         );
         
         return matchesSubject || matchesParticipants || matchesContent;
       });
-    } else {
-      // Apply specific filters
-      if (from) {
-        result = result.filter(conversation => 
-          conversation.participants.some(p => p.toLowerCase().includes(from.toLowerCase()))
-        );
-      }
-      
-      if (to) {
-        result = result.filter(conversation => 
-          conversation.participants.some(p => p.toLowerCase().includes(to.toLowerCase()))
-        );
-      }
-      
-      if (subject) {
-        result = result.filter(conversation => 
-          conversation.subject.toLowerCase().includes(subject.toLowerCase())
-        );
-      }
     }
     
     setFilteredConversations(result);
@@ -221,17 +269,23 @@ export default function Home() {
     setFilteredConversations(result);
   };
 
+  // Clear search
+  const clearSearch = () => {
+    setCurrentSearchTerm('');
+    setFilteredConversations(conversations);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Head>
-        <title>MBOX Viewer</title>
+        <title>BH MBOX Viewer</title>
         <meta name="description" content="Secure, client-side MBOX email viewer" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">MBOX Viewer</h1>
+          <h1 className="text-2xl font-bold text-gray-900">BH MBOX Viewer</h1>
           <div>
             <input
               type="file"
@@ -265,11 +319,63 @@ export default function Home() {
         ) : conversations.length > 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1">
-              <FilterPanel onApplyFilters={applyFilters} onShowConversation={showConversation} />
+              {/* Single search box */}
+              <div className="bg-white shadow rounded p-4 mb-4">
+                <h2 className="text-lg font-medium text-gray-900 mb-3">Search</h2>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search across all emails"
+                    className="w-full block border border-gray-300 rounded-md shadow-sm py-2 pl-10 pr-4 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                    value={currentSearchTerm}
+                    onChange={(e) => setCurrentSearchTerm(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleSearch(currentSearchTerm)}
+                  />
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </span>
+                  {currentSearchTerm && (
+                    <button
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+                      onClick={clearSearch}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleSearch(currentSearchTerm)}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    Search
+                  </button>
+                </div>
+                
+                {currentSearchTerm && (
+                  <div className="mt-3 text-sm text-gray-600">
+                    Found {filteredConversations.length} 
+                    {filteredConversations.length === 1 ? ' result' : ' results'} 
+                    for "<span className="font-medium">{currentSearchTerm}</span>"
+                  </div>
+                )}
+              </div>
+              
+              <FilterPanel 
+                onApplyFilters={applyFilters} 
+                onShowConversation={showConversation}
+              />
+              
               <EmailList 
                 conversations={filteredConversations}
                 onSelectConversation={handleSelectConversation}
                 selectedConversationId={selectedConversation?.id}
+                searchTerm={currentSearchTerm}
               />
             </div>
             <div className="lg:col-span-2">
@@ -277,6 +383,7 @@ export default function Home() {
                 <EmailView 
                   key={selectedConversation.id}
                   conversation={selectedConversation} 
+                  searchTerm={currentSearchTerm}
                 />
               ) : (
                 <div className="bg-white shadow rounded p-6 h-full flex items-center justify-center">

@@ -1,7 +1,7 @@
 // File: components/EmailView.js
 import { useState, useEffect } from 'react';
 
-export default function EmailView({ conversation }) {
+export default function EmailView({ conversation, searchTerm }) {
   const [expandedEmails, setExpandedEmails] = useState(new Set());
   const [activeTab, setActiveTab] = useState('html');
   
@@ -131,6 +131,20 @@ export default function EmailView({ conversation }) {
     return { text: cleanedText, html: cleanedHtml };
   };
   
+  // Highlight text matched by search term
+  const highlightText = (text) => {
+    if (!searchTerm || !text) return text;
+    
+    // Escape special characters in search term for regex
+    const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    
+    // Replace matches with highlighted spans
+    return text.replace(
+      new RegExp(`(${escapedSearchTerm})`, 'gi'), 
+      '<mark class="bg-yellow-200 px-0.5 rounded">$1</mark>'
+    );
+  };
+  
   // Print the current email
   const handlePrintEmail = (email) => {
     const printWindow = window.open('', '_blank');
@@ -228,7 +242,13 @@ export default function EmailView({ conversation }) {
     <div className="bg-white shadow rounded overflow-hidden">
       {/* Conversation header */}
       <div className="px-6 py-4 border-b border-gray-200">
-        <h2 className="text-xl font-semibold">{conversation.subject}</h2>
+        <h2 className="text-xl font-semibold">
+          {searchTerm ? (
+            <span dangerouslySetInnerHTML={{ 
+              __html: highlightText(conversation.subject) 
+            }} />
+          ) : conversation.subject}
+        </h2>
         
         <div className="mt-2 flex items-center text-sm text-gray-500">
           <span className="bg-blue-100 text-blue-800 rounded-full px-2 py-0.5 text-xs font-medium mr-2">
@@ -239,12 +259,23 @@ export default function EmailView({ conversation }) {
             {conversation.participants && conversation.participants.length > 3 && ' and others'}
           </span>
         </div>
+        
+        {searchTerm && (
+          <div className="mt-2 bg-yellow-50 border border-yellow-100 rounded px-3 py-1.5 text-sm">
+            <span className="font-medium">Search term: </span>
+            <span className="bg-yellow-200 px-1 py-0.5 rounded">{searchTerm}</span>
+          </div>
+        )}
       </div>
       
       {/* Email thread */}
       <div className="divide-y divide-gray-200 max-h-[600px] overflow-auto">
         {conversation.emails && conversation.emails.map((email, index) => {
           const content = cleanEmailContent(email);
+          // If searching, apply highlighting to content
+          const displayHtml = searchTerm ? highlightText(content.html) : content.html;
+          const displayText = searchTerm ? highlightText(content.text) : content.text;
+          
           return (
             <div key={email.id || index} className="px-6 py-4">
               <div className="flex items-start">
@@ -262,7 +293,11 @@ export default function EmailView({ conversation }) {
                   {/* Email header */}
                   <div className="flex justify-between items-baseline mb-1">
                     <h3 className="text-sm font-medium">
-                      {getSenderName(email.from)}
+                      {searchTerm ? (
+                        <span dangerouslySetInnerHTML={{ 
+                          __html: highlightText(getSenderName(email.from)) 
+                        }} />
+                      ) : getSenderName(email.from)}
                     </h3>
                     <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
                       {formatDate(email.date)}
@@ -270,7 +305,11 @@ export default function EmailView({ conversation }) {
                   </div>
                   
                   <div className="text-xs text-gray-500 mb-2">
-                    <span>To: {email.to}</span>
+                    <span>To: {searchTerm ? (
+                      <span dangerouslySetInnerHTML={{ 
+                        __html: highlightText(email.to) 
+                      }} />
+                    ) : email.to}</span>
                   </div>
                   
                   {/* Email content - collapsed or expanded */}
@@ -307,9 +346,11 @@ export default function EmailView({ conversation }) {
                       {/* Email body */}
                       <div className="prose max-w-none">
                         {activeTab === 'html' && content.html ? (
-                          <div dangerouslySetInnerHTML={{ __html: content.html }} />
+                          <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
                         ) : (
-                          <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">{content.text}</pre>
+                          <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
+                            <span dangerouslySetInnerHTML={{ __html: displayText }} />
+                          </pre>
                         )}
                       </div>
                       
@@ -323,7 +364,13 @@ export default function EmailView({ conversation }) {
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                                 </svg>
-                                <span>{attachment.filename}</span>
+                                <span>
+                                  {searchTerm ? (
+                                    <span dangerouslySetInnerHTML={{ 
+                                      __html: highlightText(attachment.filename) 
+                                    }} />
+                                  ) : attachment.filename}
+                                </span>
                                 <button
                                   onClick={() => handleSaveAttachment(attachment)}
                                   className="ml-2 text-blue-600 hover:text-blue-800"
@@ -355,7 +402,11 @@ export default function EmailView({ conversation }) {
                   ) : (
                     <div className="mt-1">
                       <p className="text-sm text-gray-800 line-clamp-2">
-                        {content.text?.slice(0, 150) || 'No content'}...
+                        {searchTerm ? (
+                          <span dangerouslySetInnerHTML={{ 
+                            __html: highlightText(content.text?.slice(0, 150) || 'No content') 
+                          }} />
+                        ) : (content.text?.slice(0, 150) || 'No content')}...
                       </p>
                       <button
                         onClick={() => toggleEmailExpansion(index)}

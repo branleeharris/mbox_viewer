@@ -1,12 +1,11 @@
-// File: components/FilterPanel.js
+// Modified FilterPanel.js - without the duplicated search
 import { useState } from 'react';
 
 export default function FilterPanel({ onApplyFilters, onShowConversation }) {
   const [filters, setFilters] = useState({
     from: '',
     to: '',
-    subject: '',
-    searchTerm: ''
+    subject: ''
   });
 
   const handleChange = (e) => {
@@ -25,8 +24,7 @@ export default function FilterPanel({ onApplyFilters, onShowConversation }) {
     setFilters({
       from: '',
       to: '',
-      subject: '',
-      searchTerm: ''
+      subject: ''
     });
     onApplyFilters({});
   };
@@ -37,8 +35,8 @@ export default function FilterPanel({ onApplyFilters, onShowConversation }) {
 
   return (
     <div className="bg-white shadow rounded p-4 mb-6">
+      {/* Filters Section */}
       <h2 className="text-lg font-medium text-gray-900 mb-4">Filters</h2>
-      
       <div className="space-y-4">
         <div>
           <label htmlFor="from" className="block text-sm font-medium text-gray-700">From</label>
@@ -72,19 +70,6 @@ export default function FilterPanel({ onApplyFilters, onShowConversation }) {
             id="subject"
             value={filters.subject}
             onChange={handleChange}
-            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-          />
-        </div>
-        
-        <div>
-          <label htmlFor="searchTerm" className="block text-sm font-medium text-gray-700">Quick Search</label>
-          <input
-            type="text"
-            name="searchTerm"
-            id="searchTerm"
-            value={filters.searchTerm}
-            onChange={handleChange}
-            placeholder="Search in all fields"
             className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
           />
         </div>
