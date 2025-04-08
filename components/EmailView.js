@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 export default function EmailView({ conversation, searchTerm }) {
   const [expandedEmails, setExpandedEmails] = useState(new Set());
   const [activeTab, setActiveTab] = useState('html');
+  const [expandedRecipients, setExpandedRecipients] = useState(new Set());
   
   // Expand the most recent email by default
   useEffect(() => {
@@ -75,6 +76,78 @@ export default function EmailView({ conversation, searchTerm }) {
       }
       return newExpanded;
     });
+  };
+  
+  // Toggle recipient list expansion
+  const toggleRecipientExpansion = (index) => {
+    setExpandedRecipients(prevExpanded => {
+      const newExpanded = new Set(prevExpanded);
+      if (newExpanded.has(index)) {
+        newExpanded.delete(index);
+      } else {
+        newExpanded.add(index);
+      }
+      return newExpanded;
+    });
+  };
+  
+  // Check if recipient list is long (more than ~50 characters)
+  const isRecipientListLong = (recipients) => {
+    return recipients && recipients.length > 50;
+  };
+  
+  // Format recipient list with truncation or expansion
+  const formatRecipients = (recipients, index) => {
+    if (!recipients) return 'Unknown';
+    
+    const isExpanded = expandedRecipients.has(index);
+    const isLong = isRecipientListLong(recipients);
+    
+    if (!isLong) {
+      // If it's not long, just display normally
+      return searchTerm ? (
+        <span dangerouslySetInnerHTML={{ __html: highlightText(recipients) }} />
+      ) : recipients;
+    }
+    
+    if (isExpanded) {
+      // If expanded, show full list with button to collapse
+      return (
+        <div>
+          {searchTerm ? (
+            <span dangerouslySetInnerHTML={{ __html: highlightText(recipients) }} />
+          ) : recipients}
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              toggleRecipientExpansion(index);
+            }}
+            className="ml-2 text-xs text-blue-600 hover:text-blue-800"
+          >
+            Show less
+          </button>
+        </div>
+      );
+    } else {
+      // If collapsed, show truncated version with button to expand
+      const truncated = recipients.substring(0, 50) + '...';
+      return (
+        <div>
+          {searchTerm ? (
+            <span dangerouslySetInnerHTML={{ __html: highlightText(truncated) }} />
+          ) : truncated}
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              toggleRecipientExpansion(index);
+            }}
+            className="ml-2 text-xs text-blue-600 hover:text-blue-800"
+          >
+            Show all recipients
+          </button>
+        </div>
+      );
+    }
   };
   
   // Clean up email body content
@@ -289,27 +362,62 @@ export default function EmailView({ conversation, searchTerm }) {
                   </span>
                 </div>
                 
+                {/* Email content container */}
                 <div className="flex-1 min-w-0">
-                  {/* Email header */}
-                  <div className="flex justify-between items-baseline mb-1">
-                    <h3 className="text-sm font-medium">
-                      {searchTerm ? (
-                        <span dangerouslySetInnerHTML={{ 
-                          __html: highlightText(getSenderName(email.from)) 
-                        }} />
-                      ) : getSenderName(email.from)}
-                    </h3>
-                    <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
-                      {formatDate(email.date)}
-                    </span>
+                  {/* Top row with action buttons - fixed layout */}
+                  <div className="flex items-start justify-between mb-2">
+                    {/* Sender info */}
+                    <div className="flex-grow pr-4">
+                      <h3 className="text-sm font-medium">
+                        {searchTerm ? (
+                          <span dangerouslySetInnerHTML={{ 
+                            __html: highlightText(getSenderName(email.from)) 
+                          }} />
+                        ) : getSenderName(email.from)}
+                      </h3>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {formatDate(email.date)}
+                      </div>
+                    </div>
+                    
+                    {/* Action buttons - fixed width */}
+                    <div className="flex-shrink-0 flex space-x-2">
+                      <button
+                        onClick={() => handlePrintEmail(email)}
+                        className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                        </svg>
+                        Print
+                      </button>
+                      {!expandedEmails.has(index) ? (
+                        <button
+                          onClick={() => toggleEmailExpansion(index)}
+                          className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                          Expand
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => toggleEmailExpansion(index)}
+                          className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          </svg>
+                          Collapse
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
+                  {/* Recipient info on a separate line with expand/collapse */}
                   <div className="text-xs text-gray-500 mb-2">
-                    <span>To: {searchTerm ? (
-                      <span dangerouslySetInnerHTML={{ 
-                        __html: highlightText(email.to) 
-                      }} />
-                    ) : email.to}</span>
+                    <span>To: {formatRecipients(email.to, index)}</span>
                   </div>
                   
                   {/* Email content - collapsed or expanded */}
@@ -382,22 +490,6 @@ export default function EmailView({ conversation, searchTerm }) {
                           </div>
                         </div>
                       )}
-                      
-                      {/* Email actions */}
-                      <div className="mt-4 flex space-x-2">
-                        <button
-                          onClick={() => handlePrintEmail(email)}
-                          className="text-xs px-2 py-1 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
-                        >
-                          Print
-                        </button>
-                        <button
-                          onClick={() => toggleEmailExpansion(index)}
-                          className="text-xs px-2 py-1 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
-                        >
-                          Collapse
-                        </button>
-                      </div>
                     </div>
                   ) : (
                     <div className="mt-1">
@@ -408,12 +500,6 @@ export default function EmailView({ conversation, searchTerm }) {
                           }} />
                         ) : (content.text?.slice(0, 150) || 'No content')}...
                       </p>
-                      <button
-                        onClick={() => toggleEmailExpansion(index)}
-                        className="mt-1 text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        Show more
-                      </button>
                     </div>
                   )}
                 </div>
