@@ -1,16 +1,243 @@
 // File: components/EmailView.js
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 export default function EmailView({ conversation, searchTerm }) {
   const [expandedEmails, setExpandedEmails] = useState(new Set());
   const [activeTab, setActiveTab] = useState('html');
   const [expandedRecipients, setExpandedRecipients] = useState(new Set());
-  
+  const [expandedQuotes, setExpandedQuotes] = useState(new Set());
+
   // Expand the most recent email by default
   useEffect(() => {
     if (conversation && conversation.emails && conversation.emails.length > 0) {
       setExpandedEmails(new Set([conversation.emails.length - 1]));
     }
+  }, [conversation]);
+
+  // Clean up email body content
+  const cleanEmailContent = (email) => {
+    if (!email) return { text: '', html: '' };
+
+    let cleanedText = '';
+    let cleanedHtml = '';
+
+    // For plain text, remove MIME boundaries and headers
+    if (email.bodyText) {
+      cleanedText = email.bodyText
+        // Remove MIME boundaries
+        .replace(/--[a-zA-Z0-9_.-]+(?:--)?\r?\n/g, '')
+        // Remove Content-Type headers
+        .replace(/Content-Type: [^\r\n]+\r?\n/g, '')
+        // Remove Content-Transfer-Encoding headers
+        .replace(/Content-Transfer-Encoding: [^\r\n]+\r?\n/g, '')
+        // Remove blank lines at the beginning
+        .replace(/^\s+/, '')
+        // Remove Content-Disposition headers
+        .replace(/Content-Disposition: [^\r\n]+\r?\n/g, '');
+
+      // If the content still has MIME-looking stuff, try to extract just what looks like actual message content
+      if (cleanedText.includes('Content-Type:') || cleanedText.includes('--=')) {
+        const contentMatches = cleanedText.match(/(?:^|\n\n)([\s\S]+?)(?:\n\n|$)/g);
+        if (contentMatches && contentMatches.length > 0) {
+          // Find the longest text segment that doesn't look like headers
+          cleanedText = contentMatches
+            .filter(segment => !segment.includes('Content-Type:') &&
+                              !segment.includes('--=') &&
+                              segment.trim().length > 10)
+            .sort((a, b) => b.length - a.length)[0] || cleanedText;
+        }
+      }
+    }
+
+    // For HTML, use the content if available, otherwise convert plain text
+    if (email.bodyHtml) {
+      cleanedHtml = email.bodyHtml
+        // Remove MIME boundaries and headers in case they got into the HTML
+        .replace(/--[a-zA-Z0-9_.-]+(?:--)?\r?\n/g, '')
+        .replace(/Content-Type: [^\r\n]+\r?\n/g, '')
+        .replace(/Content-Transfer-Encoding: [^\r\n]+\r?\n/g, '');
+    } else if (cleanedText) {
+      // Convert plain text to simple HTML
+      cleanedHtml = cleanedText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>');
+    }
+
+    return { text: cleanedText, html: cleanedHtml };
+  };
+
+  // Normalize text for comparison (strip HTML, normalize whitespace, lowercase)
+  const normalizeTextForComparison = (text, isHtml) => {
+    if (!text) return '';
+
+    let normalized = text;
+
+    // Strip HTML tags if HTML content
+    if (isHtml) {
+      // Remove script and style elements completely
+      normalized = normalized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+      normalized = normalized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+      // Remove HTML tags
+      normalized = normalized.replace(/<[^>]+>/g, ' ');
+      // Decode common HTML entities
+      normalized = normalized.replace(/&nbsp;/g, ' ');
+      normalized = normalized.replace(/&amp;/g, '&');
+      normalized = normalized.replace(/&lt;/g, '<');
+      normalized = normalized.replace(/&gt;/g, '>');
+      normalized = normalized.replace(/&quot;/g, '"');
+    }
+
+    // Normalize whitespace
+    normalized = normalized.replace(/\s+/g, ' ');
+    normalized = normalized.trim();
+
+    // Convert to lowercase for comparison
+    normalized = normalized.toLowerCase();
+
+    return normalized;
+  };
+
+  // Split text into chunks (lines/paragraphs) for comparison
+  const chunkText = (text) => {
+    if (!text) return [];
+
+    // Split by newlines and filter out very short chunks
+    const chunks = text
+      .split(/\n+/)
+      .map(chunk => chunk.trim())
+      .filter(chunk => chunk.length >= 20); // Minimum 20 chars to avoid false positives
+
+    return chunks;
+  };
+
+  // Find new content by comparing against previous emails (content deduplication)
+  const findNewContent = (currentText, previousEmailsContent, isHtml) => {
+    if (!currentText) return { newContent: '', quotedContent: '', hasQuotes: false };
+    if (!previousEmailsContent || previousEmailsContent.length === 0) {
+      // No previous emails, so all content is new
+      return { newContent: currentText, quotedContent: '', hasQuotes: false };
+    }
+
+    // Normalize current email
+    const normalizedCurrent = normalizeTextForComparison(currentText, isHtml);
+    const currentChunks = chunkText(normalizedCurrent);
+
+    // Build a set of all chunks from previous emails
+    const previousChunksSet = new Set();
+    previousEmailsContent.forEach(prevEmail => {
+      const normalizedPrev = normalizeTextForComparison(prevEmail, isHtml);
+      const prevChunks = chunkText(normalizedPrev);
+      prevChunks.forEach(chunk => previousChunksSet.add(chunk));
+    });
+
+    // Find which chunks in current email are new (not in previous emails)
+    const newChunksIndices = new Set();
+    const quotedChunksIndices = new Set();
+
+    currentChunks.forEach((chunk, index) => {
+      if (previousChunksSet.has(chunk)) {
+        quotedChunksIndices.add(index);
+      } else {
+        newChunksIndices.add(index);
+      }
+    });
+
+    // If most content is new, return original content
+    if (quotedChunksIndices.size === 0) {
+      return { newContent: currentText, quotedContent: '', hasQuotes: false };
+    }
+
+    // Split original text to separate new from quoted
+    // This is a simple heuristic: keep text at start until we hit quoted chunks
+    const originalLines = currentText.split(/\n+/);
+    const newLines = [];
+    const quotedLines = [];
+    let inQuotedSection = false;
+    let currentChunkIndex = 0;
+
+    for (const line of originalLines) {
+      const lineNormalized = normalizeTextForComparison(line, isHtml);
+
+      if (lineNormalized.length >= 20) {
+        // This is a substantial line, check if it's quoted
+        if (quotedChunksIndices.has(currentChunkIndex)) {
+          inQuotedSection = true;
+          quotedLines.push(line);
+        } else if (newChunksIndices.has(currentChunkIndex)) {
+          if (!inQuotedSection) {
+            newLines.push(line);
+          } else {
+            quotedLines.push(line);
+          }
+        }
+        currentChunkIndex++;
+      } else {
+        // Short line, attach it to current section
+        if (inQuotedSection) {
+          quotedLines.push(line);
+        } else {
+          newLines.push(line);
+        }
+      }
+    }
+
+    // If we couldn't separate cleanly, fall back to keeping first 40% as new
+    if (newLines.length === 0 && originalLines.length > 0) {
+      const splitPoint = Math.ceil(originalLines.length * 0.4);
+      return {
+        newContent: originalLines.slice(0, splitPoint).join('\n').trim(),
+        quotedContent: originalLines.slice(splitPoint).join('\n').trim(),
+        hasQuotes: true
+      };
+    }
+
+    return {
+      newContent: newLines.join('\n').trim() || currentText,
+      quotedContent: quotedLines.join('\n').trim(),
+      hasQuotes: quotedLines.length > 0
+    };
+  };
+
+  // Wrapper function that maintains the same interface as before
+  const parseQuotedContent = (text, isHtml, previousEmailsContent = []) => {
+    return findNewContent(text, previousEmailsContent, isHtml);
+  };
+
+  // Pre-process emails with content deduplication for screen display
+  const processedEmails = useMemo(() => {
+    if (!conversation || !conversation.emails) return [];
+
+    // Sort emails chronologically for processing
+    const sortedEmails = [...conversation.emails].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const previousEmailsContent = [];
+    const processed = [];
+
+    sortedEmails.forEach((email, index) => {
+      const content = cleanEmailContent(email);
+      const isHtml = email.bodyHtml && content.html;
+      const currentContent = isHtml ? content.html : content.text;
+
+      // Parse with deduplication
+      const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
+
+      // Store processed result with original index
+      const originalIndex = conversation.emails.indexOf(email);
+      processed.push({
+        email,
+        originalIndex,
+        content,
+        parsed,
+        isHtml
+      });
+
+      // Add to previous emails for next iteration
+      previousEmailsContent.push(currentContent);
+    });
+
+    // Return in original conversation order
+    return processed.sort((a, b) => a.originalIndex - b.originalIndex);
   }, [conversation]);
 
   if (!conversation) return null;
@@ -60,11 +287,24 @@ export default function EmailView({ conversation, searchTerm }) {
   // Get sender name for display
   const getSenderName = (from) => {
     if (!from) return 'Unknown';
-    
+
     const namePart = from.split('<')[0].trim();
     return namePart || from;
   };
-  
+
+  // Toggle quote expansion
+  const toggleQuoteExpansion = (index) => {
+    setExpandedQuotes(prevExpanded => {
+      const newExpanded = new Set(prevExpanded);
+      if (newExpanded.has(index)) {
+        newExpanded.delete(index);
+      } else {
+        newExpanded.add(index);
+      }
+      return newExpanded;
+    });
+  };
+
   // Toggle email expansion
   const toggleEmailExpansion = (index) => {
     setExpandedEmails(prevExpanded => {
@@ -149,61 +389,7 @@ export default function EmailView({ conversation, searchTerm }) {
       );
     }
   };
-  
-  // Clean up email body content
-  const cleanEmailContent = (email) => {
-    if (!email) return { text: '', html: '' };
-    
-    let cleanedText = '';
-    let cleanedHtml = '';
-    
-    // For plain text, remove MIME boundaries and headers
-    if (email.bodyText) {
-      cleanedText = email.bodyText
-        // Remove MIME boundaries
-        .replace(/--[a-zA-Z0-9_.-]+(?:--)?\r?\n/g, '')
-        // Remove Content-Type headers
-        .replace(/Content-Type: [^\r\n]+\r?\n/g, '')
-        // Remove Content-Transfer-Encoding headers
-        .replace(/Content-Transfer-Encoding: [^\r\n]+\r?\n/g, '')
-        // Remove blank lines at the beginning
-        .replace(/^\s+/, '')
-        // Remove Content-Disposition headers
-        .replace(/Content-Disposition: [^\r\n]+\r?\n/g, '');
-      
-      // If the content still has MIME-looking stuff, try to extract just what looks like actual message content
-      if (cleanedText.includes('Content-Type:') || cleanedText.includes('--=')) {
-        const contentMatches = cleanedText.match(/(?:^|\n\n)([\s\S]+?)(?:\n\n|$)/g);
-        if (contentMatches && contentMatches.length > 0) {
-          // Find the longest text segment that doesn't look like headers
-          cleanedText = contentMatches
-            .filter(segment => !segment.includes('Content-Type:') && 
-                              !segment.includes('--=') && 
-                              segment.trim().length > 10)
-            .sort((a, b) => b.length - a.length)[0] || cleanedText;
-        }
-      }
-    }
-    
-    // For HTML, use the content if available, otherwise convert plain text
-    if (email.bodyHtml) {
-      cleanedHtml = email.bodyHtml
-        // Remove MIME boundaries and headers in case they got into the HTML
-        .replace(/--[a-zA-Z0-9_.-]+(?:--)?\r?\n/g, '')
-        .replace(/Content-Type: [^\r\n]+\r?\n/g, '')
-        .replace(/Content-Transfer-Encoding: [^\r\n]+\r?\n/g, '');
-    } else if (cleanedText) {
-      // Convert plain text to simple HTML
-      cleanedHtml = cleanedText
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, '<br>');
-    }
-    
-    return { text: cleanedText, html: cleanedHtml };
-  };
-  
+
   // Highlight text matched by search term
   const highlightText = (text) => {
     if (!searchTerm || !text) return text;
@@ -221,14 +407,36 @@ export default function EmailView({ conversation, searchTerm }) {
   // Print the current email
   const handlePrintEmail = (email) => {
     const printWindow = window.open('', '_blank');
-    
+
     if (!printWindow) {
       alert('Please allow pop-ups to print emails');
       return;
     }
-    
+
     const content = cleanEmailContent(email);
-    
+
+    // Build previous emails content for deduplication
+    const emailIndex = conversation.emails.findIndex(e => e.id === email.id || e === email);
+    const previousEmailsContent = [];
+
+    if (emailIndex > 0) {
+      // Get all emails before this one
+      const sortedEmails = [...conversation.emails].sort((a, b) => new Date(a.date) - new Date(b.date));
+      const currentEmailIndex = sortedEmails.findIndex(e => e.id === email.id || e === email);
+
+      for (let i = 0; i < currentEmailIndex; i++) {
+        const prevContent = cleanEmailContent(sortedEmails[i]);
+        const prevIsHtml = sortedEmails[i].bodyHtml && prevContent.html;
+        previousEmailsContent.push(prevIsHtml ? prevContent.html : prevContent.text);
+      }
+    }
+
+    // Parse content to extract only new content (strip quoted text)
+    const isHtml = activeTab === 'html' && content.html;
+    const currentContent = isHtml ? content.html : content.text;
+    const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
+    const newContent = parsed.newContent || currentContent;
+
     const htmlContent = `
       <!DOCTYPE html>
       <html>
@@ -236,16 +444,17 @@ export default function EmailView({ conversation, searchTerm }) {
         <title>Email: ${email.subject}</title>
         <meta charset="UTF-8">
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }
-          .email-container { max-width: 800px; margin: 0 auto; border: 1px solid #ddd; padding: 20px; }
-          .header { border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px; }
-          .header-item { margin-bottom: 5px; }
+          body { font-family: Arial, sans-serif; line-height: 1.5; margin: 20px; font-size: 12pt; }
+          .email-container { max-width: 800px; margin: 0 auto; border: 1px solid #ccc; padding: 15px; background: #fafafa; }
+          .header { border-bottom: 1px solid #ccc; padding-bottom: 10px; margin-bottom: 15px; }
+          .header-item { margin-bottom: 5px; font-size: 10pt; }
           .label { font-weight: bold; width: 60px; display: inline-block; }
-          .body { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-          .attachments { margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-          .print-footer { text-align: center; color: #666; margin-top: 30px; font-size: 12px; }
+          .body { margin-top: 15px; font-size: 11pt; line-height: 1.6; }
+          .body pre { white-space: pre-wrap; font-family: Arial, sans-serif; margin: 0; }
+          .attachments { margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd; font-size: 10pt; }
+          .print-footer { text-align: center; color: #999; margin-top: 30px; font-size: 9pt; }
           @media print {
-            body { margin: 0; }
+            body { margin: 0; padding: 15px; }
             .no-print { display: none; }
           }
         </style>
@@ -258,25 +467,22 @@ export default function EmailView({ conversation, searchTerm }) {
             <div class="header-item"><span class="label">Subject:</span> ${email.subject}</div>
             <div class="header-item"><span class="label">Date:</span> ${formatDate(email.date)}</div>
           </div>
-          
+
           <div class="body">
-            ${activeTab === 'html' && content.html ? content.html : content.text.replace(/\n/g, '<br>')}
+            ${isHtml ? newContent : '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'}
           </div>
-          
+
           ${email.attachments && email.attachments.length > 0 ? `
             <div class="attachments">
-              <h3>Attachments</h3>
-              <ul>
-                ${email.attachments.map(att => `<li>${att.filename} (${att.contentType})</li>`).join('')}
-              </ul>
+              <strong>Attachments:</strong> ${email.attachments.map(att => att.filename).join(', ')}
             </div>
           ` : ''}
         </div>
-        
+
         <div class="print-footer">
-          <p>Printed from MBOX Viewer</p>
-          <button class="no-print" onclick="window.print()">Print</button>
-          <button class="no-print" onclick="window.close()">Close</button>
+          <p>Printed from MBOX Viewer &bull; ${new Date().toLocaleDateString()}</p>
+          <button class="no-print" onclick="window.print()" style="margin: 10px 5px; padding: 8px 16px; cursor: pointer;">Print</button>
+          <button class="no-print" onclick="window.close()" style="margin: 10px 5px; padding: 8px 16px; cursor: pointer;">Close</button>
         </div>
         <script>
           window.onload = function() {
@@ -288,7 +494,7 @@ export default function EmailView({ conversation, searchTerm }) {
       </body>
       </html>
     `;
-    
+
     printWindow.document.write(htmlContent);
     printWindow.document.close();
   };
@@ -296,12 +502,12 @@ export default function EmailView({ conversation, searchTerm }) {
   // Print the entire conversation
   const handlePrintConversation = () => {
     const printWindow = window.open('', '_blank');
-    
+
     if (!printWindow) {
       alert('Please allow pop-ups to print emails');
       return;
     }
-    
+
     // Start building the HTML content for the print window
     let htmlContent = `
       <!DOCTYPE html>
@@ -310,20 +516,26 @@ export default function EmailView({ conversation, searchTerm }) {
         <title>Conversation: ${conversation.subject}</title>
         <meta charset="UTF-8">
         <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }
+          body { font-family: Arial, sans-serif; line-height: 1.5; margin: 20px; font-size: 12pt; }
           .conversation-container { max-width: 800px; margin: 0 auto; }
-          .conversation-header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 30px; }
-          .email { border: 1px solid #ddd; padding: 20px; margin-bottom: 30px; border-radius: 8px; }
-          .email-header { border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
-          .email-header-item { margin-bottom: 5px; }
-          .label { font-weight: bold; width: 60px; display: inline-block; }
-          .email-body { margin-top: 15px; }
-          .email-separator { height: 20px; }
-          .print-footer { text-align: center; color: #666; margin-top: 30px; font-size: 12px; }
+          .conversation-header { border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+          .conversation-header h1 { font-size: 16pt; margin: 0 0 8px 0; }
+          .conversation-header p { margin: 4px 0; font-size: 10pt; color: #666; }
+          .email { border: 1px solid #ccc; padding: 12px; margin-bottom: 15px; border-radius: 4px; background: #fafafa; }
+          .email-header { font-size: 10pt; color: #444; margin-bottom: 10px; line-height: 1.4; }
+          .email-number { font-weight: bold; color: #666; font-size: 9pt; margin-bottom: 4px; }
+          .email-meta { display: flex; justify-content: space-between; flex-wrap: wrap; }
+          .email-from { font-weight: bold; }
+          .email-date { color: #666; font-size: 9pt; }
+          .email-body { margin-top: 10px; font-size: 11pt; line-height: 1.6; color: #000; }
+          .email-body pre { white-space: pre-wrap; font-family: Arial, sans-serif; margin: 0; }
+          .attachments-info { margin-top: 8px; padding-top: 8px; border-top: 1px solid #ddd; font-size: 9pt; color: #666; }
+          .print-footer { text-align: center; color: #999; margin-top: 30px; font-size: 9pt; border-top: 1px solid #ddd; padding-top: 15px; }
           @media print {
-            body { margin: 0; }
+            body { margin: 0; padding: 15px; }
             .no-print { display: none; }
-            .email { break-inside: avoid; }
+            .email { break-inside: avoid; page-break-inside: avoid; }
+            .conversation-header { break-after: avoid; page-break-after: avoid; }
           }
         </style>
       </head>
@@ -331,55 +543,70 @@ export default function EmailView({ conversation, searchTerm }) {
         <div class="conversation-container">
           <div class="conversation-header">
             <h1>${conversation.subject}</h1>
-            <p>${conversation.emails?.length || 0} messages in this conversation</p>
-            <p>Between: ${conversation.participants?.join(', ') || 'Unknown'}</p>
+            <p>${conversation.emails?.length || 0} messages &bull; ${conversation.participants?.slice(0, 3).join(', ') || 'Unknown'}${conversation.participants && conversation.participants.length > 3 ? ' and others' : ''}</p>
           </div>
     `;
-    
+
     // Add each email in the conversation
     if (conversation.emails && conversation.emails.length > 0) {
       // Sort emails by date (oldest first for printing)
       const sortedEmails = [...conversation.emails].sort((a, b) => {
         return new Date(a.date) - new Date(b.date);
       });
-      
+
+      const totalEmails = sortedEmails.length;
+
+      // Build up previous emails content as we go
+      const previousEmailsContent = [];
+
       sortedEmails.forEach((email, index) => {
         const content = cleanEmailContent(email);
-        
+
+        // Parse content to extract only new content (strip quoted text)
+        // Pass all previous emails' content for deduplication
+        const isHtml = email.bodyHtml && content.html;
+        const currentContent = isHtml ? content.html : content.text;
+        const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
+        const newContent = parsed.newContent || currentContent;
+
+        // Add this email's content to the previous emails list for next iteration
+        previousEmailsContent.push(currentContent);
+
+        // Format date more compactly
+        const dateStr = formatDate(email.date);
+
         htmlContent += `
           <div class="email">
+            <div class="email-number">Message ${index + 1} of ${totalEmails}</div>
             <div class="email-header">
-              <div class="email-header-item"><span class="label">From:</span> ${email.from}</div>
-              <div class="email-header-item"><span class="label">To:</span> ${email.to}</div>
-              <div class="email-header-item"><span class="label">Date:</span> ${formatDate(email.date)}</div>
+              <div class="email-meta">
+                <div class="email-from">${email.from}</div>
+                <div class="email-date">${dateStr}</div>
+              </div>
             </div>
-            
+
             <div class="email-body">
-              ${email.bodyHtml ? content.html : content.text.replace(/\n/g, '<br>')}
+              ${isHtml ? newContent : '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'}
             </div>
-            
+
             ${email.attachments && email.attachments.length > 0 ? `
-              <div class="email-attachments" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
-                <h3>Attachments</h3>
-                <ul>
-                  ${email.attachments.map(att => `<li>${att.filename} (${att.contentType})</li>`).join('')}
-                </ul>
+              <div class="attachments-info">
+                📎 ${email.attachments.length} attachment${email.attachments.length > 1 ? 's' : ''}: ${email.attachments.map(att => att.filename).join(', ')}
               </div>
             ` : ''}
           </div>
-          ${index < sortedEmails.length - 1 ? `<div class="email-separator"></div>` : ''}
         `;
       });
     }
-    
+
     // Close the HTML content
     htmlContent += `
         </div>
-        
+
         <div class="print-footer">
-          <p>Printed from MBOX Viewer</p>
-          <button class="no-print" onclick="window.print()">Print</button>
-          <button class="no-print" onclick="window.close()">Close</button>
+          <p>Printed from MBOX Viewer &bull; ${new Date().toLocaleDateString()}</p>
+          <button class="no-print" onclick="window.print()" style="margin: 10px 5px; padding: 8px 16px; cursor: pointer;">Print</button>
+          <button class="no-print" onclick="window.close()" style="margin: 10px 5px; padding: 8px 16px; cursor: pointer;">Close</button>
         </div>
         <script>
           window.onload = function() {
@@ -391,7 +618,7 @@ export default function EmailView({ conversation, searchTerm }) {
       </body>
       </html>
     `;
-    
+
     // Write the content to the print window
     printWindow.document.write(htmlContent);
     printWindow.document.close();
@@ -462,12 +689,9 @@ export default function EmailView({ conversation, searchTerm }) {
       
       {/* Email thread */}
       <div className="divide-y divide-gray-200 max-h-[600px] overflow-auto">
-        {conversation.emails && conversation.emails.map((email, index) => {
-          const content = cleanEmailContent(email);
-          // If searching, apply highlighting to content
-          const displayHtml = searchTerm ? highlightText(content.html) : content.html;
-          const displayText = searchTerm ? highlightText(content.text) : content.text;
-          
+        {processedEmails.map((processed, index) => {
+          const { email, content, parsed, isHtml } = processed;
+
           return (
             <div key={email.id || index} className="px-6 py-4">
               <div className="flex items-start">
@@ -572,13 +796,70 @@ export default function EmailView({ conversation, searchTerm }) {
                       
                       {/* Email body */}
                       <div className="prose max-w-none">
-                        {activeTab === 'html' && content.html ? (
-                          <div dangerouslySetInnerHTML={{ __html: displayHtml }} />
-                        ) : (
-                          <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
-                            <span dangerouslySetInnerHTML={{ __html: displayText }} />
-                          </pre>
-                        )}
+                        {(() => {
+                          // Use pre-processed parsed content from useMemo
+                          const isHtmlMode = activeTab === 'html' && content.html;
+
+                          // Apply highlighting to new content if searching
+                          const displayNewContent = searchTerm && parsed.newContent
+                            ? highlightText(parsed.newContent)
+                            : parsed.newContent;
+
+                          const displayQuotedContent = searchTerm && parsed.quotedContent
+                            ? highlightText(parsed.quotedContent)
+                            : parsed.quotedContent;
+
+                          const isQuoteExpanded = expandedQuotes.has(index);
+
+                          return (
+                            <>
+                              {/* New content (always shown) */}
+                              {isHtmlMode ? (
+                                <div dangerouslySetInnerHTML={{ __html: displayNewContent }} />
+                              ) : (
+                                <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
+                                  <span dangerouslySetInnerHTML={{ __html: displayNewContent }} />
+                                </pre>
+                              )}
+
+                              {/* Quoted content (collapsible) */}
+                              {parsed.hasQuotes && (
+                                <div className="mt-4">
+                                  <button
+                                    onClick={() => toggleQuoteExpansion(index)}
+                                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center"
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      className={`h-4 w-4 mr-1 transition-transform ${isQuoteExpanded ? 'rotate-180' : ''}`}
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                    {isQuoteExpanded ? 'Hide' : 'Show'} quoted text
+                                  </button>
+
+                                  {isQuoteExpanded && (
+                                    <div className="mt-2 quoted-text-container">
+                                      {isHtmlMode ? (
+                                        <div
+                                          className="quoted-text-content"
+                                          dangerouslySetInnerHTML={{ __html: displayQuotedContent }}
+                                        />
+                                      ) : (
+                                        <pre className="quoted-text-content whitespace-pre-wrap font-sans text-sm">
+                                          <span dangerouslySetInnerHTML={{ __html: displayQuotedContent }} />
+                                        </pre>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                       
                       {/* Attachments */}

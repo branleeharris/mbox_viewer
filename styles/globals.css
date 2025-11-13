@@ -68,3 +68,58 @@ pre {
 .overflow-auto::-webkit-scrollbar-thumb:hover {
   background: #999;
 }
+
+/* Quoted text styling */
+.quoted-text-container {
+  background-color: #f9fafb;
+  border-left: 3px solid #d1d5db;
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.quoted-text-content {
+  color: #6b7280;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* Limit nested quote indentation depth */
+.quoted-text-content blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 2px solid #d1d5db;
+  color: #6b7280;
+}
+
+/* Prevent excessive nesting - cap at 3 levels */
+.quoted-text-content blockquote blockquote blockquote {
+  margin-left: 0 !important;
+  padding-left: 12px !important;
+}
+
+.quoted-text-content blockquote blockquote blockquote blockquote {
+  margin-left: 0 !important;
+  padding-left: 8px !important;
+  border-left-width: 1px !important;
+}
+
+/* Style quote headers (On ... wrote:) */
+.quoted-text-content {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
+/* Ensure quoted sections don't push content too far right */
+.quoted-text-content > * {
+  max-width: 100% !important;
+}
+
+/* Override any inline margin styles in deeply nested quotes */
+.quoted-text-content [style*="margin-left"] {
+  margin-left: 12px !important;
+}
+
+.quoted-text-content [style*="padding-left"] {
+  padding-left: 12px !important;
+}
