@@ -14,6 +14,36 @@ export default function EmailView({ conversation, searchTerm }) {
     }
   }, [conversation]);
 
+  // Decode HTML entities and fix character encoding
+  const decodeHtmlEntities = (text) => {
+    if (!text) return text;
+
+    // Create a temporary element to decode HTML entities
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = text;
+    let decoded = textarea.value;
+
+    // Fix common unicode character issues
+    decoded = decoded
+      // Fix narrow no-break space (U+202F) - commonly appears as â¯
+      .replace(/\u202F/g, ' ')
+      // Fix other common problematic spaces
+      .replace(/\u00A0/g, ' ') // non-breaking space
+      .replace(/\u2009/g, ' ') // thin space
+      // Fix em dash and en dash encoding issues
+      .replace(/â/g, '—')
+      .replace(/â/g, '–')
+      // Fix smart quotes
+      .replace(/â/g, '"')
+      .replace(/â/g, '"')
+      .replace(/â/g, "'")
+      .replace(/â/g, "'")
+      // Fix ellipsis
+      .replace(/â¦/g, '...');
+
+    return decoded;
+  };
+
   // Clean up email body content
   const cleanEmailContent = (email) => {
     if (!email) return { text: '', html: '' };
@@ -47,6 +77,9 @@ export default function EmailView({ conversation, searchTerm }) {
             .sort((a, b) => b.length - a.length)[0] || cleanedText;
         }
       }
+
+      // Decode HTML entities and fix character encoding
+      cleanedText = decodeHtmlEntities(cleanedText);
     }
 
     // For HTML, use the content if available, otherwise convert plain text
@@ -56,6 +89,9 @@ export default function EmailView({ conversation, searchTerm }) {
         .replace(/--[a-zA-Z0-9_.-]+(?:--)?\r?\n/g, '')
         .replace(/Content-Type: [^\r\n]+\r?\n/g, '')
         .replace(/Content-Transfer-Encoding: [^\r\n]+\r?\n/g, '');
+
+      // Decode HTML entities in the HTML content
+      cleanedHtml = decodeHtmlEntities(cleanedHtml);
     } else if (cleanedText) {
       // Convert plain text to simple HTML
       cleanedHtml = cleanedText
@@ -415,27 +451,9 @@ export default function EmailView({ conversation, searchTerm }) {
 
     const content = cleanEmailContent(email);
 
-    // Build previous emails content for deduplication
-    const emailIndex = conversation.emails.findIndex(e => e.id === email.id || e === email);
-    const previousEmailsContent = [];
-
-    if (emailIndex > 0) {
-      // Get all emails before this one
-      const sortedEmails = [...conversation.emails].sort((a, b) => new Date(a.date) - new Date(b.date));
-      const currentEmailIndex = sortedEmails.findIndex(e => e.id === email.id || e === email);
-
-      for (let i = 0; i < currentEmailIndex; i++) {
-        const prevContent = cleanEmailContent(sortedEmails[i]);
-        const prevIsHtml = sortedEmails[i].bodyHtml && prevContent.html;
-        previousEmailsContent.push(prevIsHtml ? prevContent.html : prevContent.text);
-      }
-    }
-
-    // Parse content to extract only new content (strip quoted text)
+    // For printing, just use the content as-is
     const isHtml = activeTab === 'html' && content.html;
-    const currentContent = isHtml ? content.html : content.text;
-    const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
-    const newContent = parsed.newContent || currentContent;
+    const newContent = isHtml ? content.html : content.text;
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -562,15 +580,10 @@ export default function EmailView({ conversation, searchTerm }) {
       sortedEmails.forEach((email, index) => {
         const content = cleanEmailContent(email);
 
-        // Parse content to extract only new content (strip quoted text)
-        // Pass all previous emails' content for deduplication
+        // For printing, just use the content as-is without deduplication for now
+        // The deduplication is causing issues
         const isHtml = email.bodyHtml && content.html;
-        const currentContent = isHtml ? content.html : content.text;
-        const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
-        const newContent = parsed.newContent || currentContent;
-
-        // Add this email's content to the previous emails list for next iteration
-        previousEmailsContent.push(currentContent);
+        const newContent = isHtml ? content.html : content.text;
 
         // Format date more compactly
         const dateStr = formatDate(email.date);
@@ -643,230 +656,266 @@ export default function EmailView({ conversation, searchTerm }) {
   };
 
   return (
-    <div className="bg-white shadow rounded overflow-hidden">
-      {/* Conversation header with print conversation button */}
-      <div className="px-6 py-4 border-b border-gray-200">
-        <div className="flex justify-between items-start">
-          <div>
-            <h2 className="text-xl font-semibold">
+    <div className="bg-white" style={{ fontFamily: 'Roboto, Arial, sans-serif' }}>
+      {/* Conversation header - Exact Gmail style */}
+      <div className="px-6 py-4 border-b" style={{ borderColor: '#e8eaed' }}>
+        <div className="flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-normal truncate" style={{ color: '#202124' }}>
               {searchTerm ? (
-                <span dangerouslySetInnerHTML={{ 
-                  __html: highlightText(conversation.subject) 
+                <span dangerouslySetInnerHTML={{
+                  __html: highlightText(conversation.subject)
                 }} />
               ) : conversation.subject}
-            </h2>
-            
-            <div className="mt-2 flex items-center text-sm text-gray-500">
-              <span className="bg-blue-100 text-blue-800 rounded-full px-2 py-0.5 text-xs font-medium mr-2">
-                {conversation.emails?.length || 0} messages
-              </span>
-              <span>
-                Between: {conversation.participants?.slice(0, 3).join(', ') || 'Unknown'}
-                {conversation.participants && conversation.participants.length > 3 && ' and others'}
-              </span>
-            </div>
-            
-            {searchTerm && (
-              <div className="mt-2 bg-yellow-50 border border-yellow-100 rounded px-3 py-1.5 text-sm">
-                <span className="font-medium">Search term: </span>
-                <span className="bg-yellow-200 px-1 py-0.5 rounded">{searchTerm}</span>
-              </div>
-            )}
+            </h1>
           </div>
-          
-          {/* Print conversation button */}
-          <button
-            onClick={handlePrintConversation}
-            className="flex items-center px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
-            Print Conversation
-          </button>
+
+          {/* Action buttons - Exact Gmail style */}
+          <div className="ml-4 flex items-center">
+            <button
+              onClick={handlePrintConversation}
+              className="p-2 rounded-full transition-colors"
+              style={{ color: '#5f6368' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(60, 64, 67, 0.08)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              title="Print all"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/>
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {searchTerm && (
+          <div className="mt-3 rounded px-3 py-2 text-sm" style={{ backgroundColor: '#fff9c4', borderColor: '#f9a825', borderWidth: '1px' }}>
+            <span className="font-medium" style={{ color: '#202124' }}>Searching for: </span>
+            <span className="px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: '#ffeb3b' }}>{searchTerm}</span>
+          </div>
+        )}
       </div>
-      
-      {/* Email thread */}
-      <div className="divide-y divide-gray-200 max-h-[600px] overflow-auto">
+
+      {/* Email thread - Exact Gmail style */}
+      <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 150px)', backgroundColor: '#ffffff' }}>
         {processedEmails.map((processed, index) => {
           const { email, content, parsed, isHtml } = processed;
+          const isExpanded = expandedEmails.has(index);
+          const isQuoteExpanded = expandedQuotes.has(index);
 
           return (
-            <div key={email.id || index} className="px-6 py-4">
-              <div className="flex items-start">
-                {/* Sender avatar */}
-                <div 
-                  className="w-10 h-10 rounded-full flex items-center justify-center mr-4 flex-shrink-0"
-                  style={{ backgroundColor: getAvatarColor(email.from) }}
-                >
-                  <span className="text-white font-medium">
+            <div
+              key={email.id || index}
+              className="transition-all"
+              style={{ borderBottom: '1px solid #e8eaed' }}
+            >
+              {/* Email card */}
+              <div
+                className={`px-6 py-3 transition-all ${!isExpanded ? 'cursor-pointer' : ''}`}
+                style={{
+                  backgroundColor: !isExpanded ? '#ffffff' : '#ffffff',
+                  boxShadow: isExpanded ? '0 2px 4px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05)' : 'none',
+                  margin: isExpanded ? '8px 16px' : '0',
+                  borderRadius: isExpanded ? '8px' : '0',
+                  border: isExpanded ? '1px solid #e8eaed' : 'none'
+                }}
+                onMouseEnter={(e) => !isExpanded && (e.currentTarget.style.backgroundColor = 'rgba(242, 245, 245, 0.8)')}
+                onMouseLeave={(e) => !isExpanded && (e.currentTarget.style.backgroundColor = '#ffffff')}
+                onClick={() => !isExpanded && toggleEmailExpansion(index)}
+              >
+                <div className="flex items-start">
+                  {/* Avatar */}
+                  <div
+                    className="rounded-full flex items-center justify-center flex-shrink-0 font-medium"
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      backgroundColor: getAvatarColor(email.from),
+                      color: '#ffffff',
+                      fontSize: '14px'
+                    }}
+                  >
                     {getSenderInitials(email.from)}
-                  </span>
-                </div>
-                
-                {/* Email content container */}
-                <div className="flex-1 min-w-0">
-                  {/* Top row with action buttons - fixed layout */}
-                  <div className="flex items-start justify-between mb-2">
-                    {/* Sender info */}
-                    <div className="flex-grow pr-4">
-                      <h3 className="text-sm font-medium">
-                        {searchTerm ? (
-                          <span dangerouslySetInnerHTML={{ 
-                            __html: highlightText(getSenderName(email.from)) 
-                          }} />
-                        ) : getSenderName(email.from)}
-                      </h3>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {formatDate(email.date)}
+                  </div>
+
+                  {/* Email content */}
+                  <div className="ml-4 flex-1 min-w-0">
+                    {!isExpanded ? (
+                      /* Collapsed view - Exact Gmail style */
+                      <div className="flex items-baseline justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium truncate" style={{ fontSize: '14px', color: '#202124' }}>
+                              {searchTerm ? (
+                                <span dangerouslySetInnerHTML={{
+                                  __html: highlightText(getSenderName(email.from))
+                                }} />
+                              ) : getSenderName(email.from)}
+                            </span>
+                            <span className="flex-shrink-0" style={{ fontSize: '12px', color: '#5f6368' }}>
+                              {new Date(email.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <div className="truncate mt-0.5" style={{ fontSize: '13px', color: '#5f6368' }}>
+                            {(() => {
+                              const preview = parsed.newContent ? parsed.newContent.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim() : '';
+                              return preview ? (preview.substring(0, 100) + (preview.length > 100 ? '...' : '')) : 'No content';
+                            })()}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    
-                    {/* Action buttons - fixed width */}
-                    <div className="flex-shrink-0 flex space-x-2">
-                      <button
-                        onClick={() => handlePrintEmail(email)}
-                        className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                        </svg>
-                        Print
-                      </button>
-                      {!expandedEmails.has(index) ? (
-                        <button
-                          onClick={() => toggleEmailExpansion(index)}
-                          className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                          Expand
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => toggleEmailExpansion(index)}
-                          className="flex items-center px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                          </svg>
-                          Collapse
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {/* Recipient info on a separate line with expand/collapse */}
-                  <div className="text-xs text-gray-500 mb-2">
-                    <span>To: {formatRecipients(email.to, index)}</span>
-                  </div>
-                  
-                  {/* Email content - collapsed or expanded */}
-                  {expandedEmails.has(index) ? (
-                    <div className="mt-3">
-                      {/* Content tabs if HTML is available */}
-                      {content.html && (
-                        <div className="border-b border-gray-200 mb-3">
-                          <nav className="flex -mb-px" aria-label="Tabs">
+                    ) : (
+                      /* Expanded view - Exact Gmail style */
+                      <div>
+                        {/* Header */}
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-medium" style={{ fontSize: '14px', color: '#202124' }}>
+                                {searchTerm ? (
+                                  <span dangerouslySetInnerHTML={{
+                                    __html: highlightText(getSenderName(email.from))
+                                  }} />
+                                ) : getSenderName(email.from)}
+                              </h3>
+                              {email.attachments && email.attachments.length > 0 && (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" style={{ color: '#5f6368' }}>
+                                  <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/>
+                                </svg>
+                              )}
+                            </div>
+                            <div className="mt-1" style={{ fontSize: '12px', color: '#5f6368' }}>
+                              <span>to {formatRecipients(email.to, index)}</span>
+                            </div>
+                          </div>
+
+                          {/* Action buttons - Exact Gmail icons */}
+                          <div className="flex items-center gap-1 ml-4">
+                            <span className="mr-2" style={{ fontSize: '12px', color: '#5f6368' }}>
+                              {formatDate(email.date)}
+                            </span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handlePrintEmail(email); }}
+                              className="p-2 rounded-full transition-colors"
+                              style={{ color: '#5f6368' }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(60, 64, 67, 0.08)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              title="Print"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/>
+                              </svg>
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleEmailExpansion(index); }}
+                              className="p-2 rounded-full transition-colors"
+                              style={{ color: '#5f6368' }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(60, 64, 67, 0.08)'}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                              title="Minimize"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M19 13H5v-2h14v2z"/>
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Content tabs if HTML is available */}
+                        {content.html && (
+                          <div className="flex space-x-4 text-xs mb-3 border-b border-gray-200">
                             <button
                               onClick={() => setActiveTab('plain')}
-                              className={`py-2 px-4 text-xs font-medium ${
+                              className={`pb-2 ${
                                 activeTab === 'plain'
-                                  ? 'border-b-2 border-blue-500 text-blue-600'
-                                  : 'border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                  ? 'border-b-2 border-blue-600 text-blue-600 font-medium'
+                                  : 'text-gray-600 hover:text-gray-900'
                               }`}
                             >
                               Plain Text
                             </button>
                             <button
                               onClick={() => setActiveTab('html')}
-                              className={`py-2 px-4 text-xs font-medium ${
+                              className={`pb-2 ${
                                 activeTab === 'html'
-                                  ? 'border-b-2 border-blue-500 text-blue-600'
-                                  : 'border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                  ? 'border-b-2 border-blue-600 text-blue-600 font-medium'
+                                  : 'text-gray-600 hover:text-gray-900'
                               }`}
                             >
                               HTML
                             </button>
-                          </nav>
-                        </div>
-                      )}
-                      
-                      {/* Email body */}
-                      <div className="prose max-w-none">
-                        {(() => {
-                          // Use pre-processed parsed content from useMemo
-                          const isHtmlMode = activeTab === 'html' && content.html;
+                          </div>
+                        )}
 
-                          // Apply highlighting to new content if searching
-                          const displayNewContent = searchTerm && parsed.newContent
-                            ? highlightText(parsed.newContent)
-                            : parsed.newContent;
+                        {/* Email body - Exact Gmail style */}
+                        <div className="mt-3" style={{ fontSize: '14px', color: '#202124', lineHeight: '1.6' }}>
+                          {(() => {
+                            // Use pre-processed parsed content from useMemo
+                            const isHtmlMode = activeTab === 'html' && content.html;
 
-                          const displayQuotedContent = searchTerm && parsed.quotedContent
-                            ? highlightText(parsed.quotedContent)
-                            : parsed.quotedContent;
+                            // Apply highlighting to new content if searching
+                            const displayNewContent = searchTerm && parsed.newContent
+                              ? highlightText(parsed.newContent)
+                              : parsed.newContent;
 
-                          const isQuoteExpanded = expandedQuotes.has(index);
+                            const displayQuotedContent = searchTerm && parsed.quotedContent
+                              ? highlightText(parsed.quotedContent)
+                              : parsed.quotedContent;
 
-                          return (
-                            <>
-                              {/* New content (always shown) */}
-                              {isHtmlMode ? (
-                                <div dangerouslySetInnerHTML={{ __html: displayNewContent }} />
-                              ) : (
-                                <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">
-                                  <span dangerouslySetInnerHTML={{ __html: displayNewContent }} />
-                                </pre>
-                              )}
+                            return (
+                              <>
+                                {/* New content (always shown) */}
+                                {isHtmlMode ? (
+                                  <div className="gmail-body" dangerouslySetInnerHTML={{ __html: displayNewContent }} />
+                                ) : (
+                                  <pre className="whitespace-pre-wrap" style={{ fontFamily: 'Roboto, Arial, sans-serif', fontSize: '14px', color: '#202124', margin: 0 }}>
+                                    <span dangerouslySetInnerHTML={{ __html: displayNewContent }} />
+                                  </pre>
+                                )}
 
-                              {/* Quoted content (collapsible) */}
-                              {parsed.hasQuotes && (
-                                <div className="mt-4">
-                                  <button
-                                    onClick={() => toggleQuoteExpansion(index)}
-                                    className="text-sm text-blue-600 hover:text-blue-800 flex items-center"
-                                  >
-                                    <svg
-                                      xmlns="http://www.w3.org/2000/svg"
-                                      className={`h-4 w-4 mr-1 transition-transform ${isQuoteExpanded ? 'rotate-180' : ''}`}
-                                      fill="none"
-                                      viewBox="0 0 24 24"
-                                      stroke="currentColor"
+                                {/* Quoted content (collapsible) - Exact Gmail style */}
+                                {parsed.hasQuotes && (
+                                  <div className="mt-4">
+                                    <button
+                                      onClick={() => toggleQuoteExpansion(index)}
+                                      className="flex items-center gap-1 px-2 py-1 rounded transition-colors"
+                                      style={{
+                                        fontSize: '13px',
+                                        color: '#5f6368',
+                                        backgroundColor: 'transparent'
+                                      }}
+                                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(60, 64, 67, 0.08)'}
+                                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                                     >
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                    </svg>
-                                    {isQuoteExpanded ? 'Hide' : 'Show'} quoted text
-                                  </button>
+                                      <span style={{ fontSize: '16px' }}>•••</span>
+                                      <span>{isQuoteExpanded ? 'Hide quoted text' : 'Show trimmed content'}</span>
+                                    </button>
 
-                                  {isQuoteExpanded && (
-                                    <div className="mt-2 quoted-text-container">
-                                      {isHtmlMode ? (
-                                        <div
-                                          className="quoted-text-content"
-                                          dangerouslySetInnerHTML={{ __html: displayQuotedContent }}
-                                        />
-                                      ) : (
-                                        <pre className="quoted-text-content whitespace-pre-wrap font-sans text-sm">
-                                          <span dangerouslySetInnerHTML={{ __html: displayQuotedContent }} />
-                                        </pre>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                      </div>
-                      
-                      {/* Attachments */}
-                      {email.attachments && email.attachments.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                          <h4 className="text-xs font-medium text-gray-700 mb-2">Attachments</h4>
-                          <div className="flex flex-wrap gap-2">
+                                    {isQuoteExpanded && (
+                                      <div className="mt-2 pl-4" style={{ borderLeft: '2px solid #e8eaed' }}>
+                                        {isHtmlMode ? (
+                                          <div
+                                            className="gmail-body"
+                                            style={{ color: '#5f6368' }}
+                                            dangerouslySetInnerHTML={{ __html: displayQuotedContent }}
+                                          />
+                                        ) : (
+                                          <pre className="whitespace-pre-wrap" style={{ fontFamily: 'Roboto, Arial, sans-serif', fontSize: '14px', color: '#5f6368', margin: 0 }}>
+                                            <span dangerouslySetInnerHTML={{ __html: displayQuotedContent }} />
+                                          </pre>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Attachments - Gmail style */}
+                        {email.attachments && email.attachments.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-gray-200">
+                            <div className="flex flex-wrap gap-2">
                             {email.attachments.map((attachment, idx) => (
                               <div key={idx} className="bg-gray-100 rounded-lg p-2 flex items-center text-xs">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -887,21 +936,12 @@ export default function EmailView({ conversation, searchTerm }) {
                                 </button>
                               </div>
                             ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="mt-1">
-                      <p className="text-sm text-gray-800 line-clamp-2">
-                        {searchTerm ? (
-                          <span dangerouslySetInnerHTML={{ 
-                            __html: highlightText(content.text?.slice(0, 150) || 'No content') 
-                          }} />
-                        ) : (content.text?.slice(0, 150) || 'No content')}...
-                      </p>
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
