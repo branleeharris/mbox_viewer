@@ -20,6 +20,7 @@ export function extractNewContent(text, isHtml = false) {
 
 function extractFromPlainText(text) {
   // Strategy 1: "On [date], [name] wrote:" markers (Gmail, Apple Mail, Thunderbird)
+  // Single-line patterns first (more specific)
   const onWrotePatterns = [
     /^On .+<.+@.+> wrote:\s*$/m,
     /^On .+wrote:\s*$/m,
@@ -30,6 +31,18 @@ function extractFromPlainText(text) {
     const match = text.match(pattern);
     if (match) {
       return splitAtMatch(text, match);
+    }
+  }
+
+  // Multi-line "On...wrote:" — Gmail often wraps the attribution across many lines:
+  // "On Thu,\nApr 2,\n2026 at\n7:47\nPM\nName\n<email@example.com>\nwrote:"
+  const multiLineOnWrote = /^On [\s\S]{1,500}?wrote:\s*$/m;
+  const multiLineMatch = text.match(multiLineOnWrote);
+  if (multiLineMatch) {
+    // Verify it looks like a real attribution (contains a date-like pattern)
+    const matchText = multiLineMatch[0];
+    if (/\d{1,4}/.test(matchText) && matchText.split('\n').length <= 15) {
+      return splitAtMatch(text, multiLineMatch);
     }
   }
 

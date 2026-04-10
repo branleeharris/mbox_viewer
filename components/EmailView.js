@@ -33,8 +33,9 @@ export default function EmailView({ conversation, searchTerm }) {
       .replace(/\u00e2\u20ac\u00af/g, ' ')       // narrow no-break space mojibake
       .replace(/\u00c2\u00af/g, ' ')              // another NNBSP mojibake variant
       .replace(/\u00af/g, '')                     // orphaned macron from partial cleanup
-      // Clean up orphaned â not part of a real word (e.g., "9:38â PM")
+      // Clean up orphaned â and € not part of real words (mojibake remnants)
       .replace(/\u00e2(?=[^a-zA-Z\u00c0-\u00ff]|$)/g, ' ')
+      .replace(/\u20ac(?=[^a-zA-Z0-9]|$)/g, '')  // orphaned euro sign from mojibake
       .replace(/  +/g, ' ');                      // collapse double spaces from removals
 
     return decoded;

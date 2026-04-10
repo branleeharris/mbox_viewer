@@ -621,7 +621,8 @@ function cleanupEncodingIssues(text) {
     .replace(/Ã§/g, 'ç')
     .replace(/Ã€/g, 'À')
     .replace(/Ã‰/g, 'É')
-    // Clean up orphaned â not part of a real word (e.g., "9:38â PM")
+    // Clean up orphaned mojibake remnants not part of real words
     .replace(/â(?=[^a-zA-ZÀ-ÿ]|$)/g, ' ')
+    .replace(/€(?=[^a-zA-Z0-9]|$)/g, '')   // orphaned euro sign from mojibake
     .replace(/  +/g, ' ')
 }
