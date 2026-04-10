@@ -117,18 +117,6 @@ pre {
   padding-left: 12px !important;
 }
 
-/* Gmail-style trimmed content indicator */
-.gmail-trimmed {
-  color: #666;
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.gmail-trimmed:hover {
-  color: #222;
-}
-
 /* View mode toggle */
 .view-toggle {
   display: flex;
