@@ -32,7 +32,10 @@ export default function EmailView({ conversation, searchTerm }) {
       .replace(/\u00e2\u20ac\u00a6/g, '\u2026') // ellipsis
       .replace(/\u00e2\u20ac\u00af/g, ' ')       // narrow no-break space mojibake
       .replace(/\u00c2\u00af/g, ' ')              // another NNBSP mojibake variant
-      .replace(/\u00af/g, '')                     // orphaned macron from partial cleanup;
+      .replace(/\u00af/g, '')                     // orphaned macron from partial cleanup
+      // Clean up orphaned â not part of a real word (e.g., "9:38â PM")
+      .replace(/\u00e2(?=[^a-zA-Z\u00c0-\u00ff]|$)/g, ' ')
+      .replace(/  +/g, ' ');                      // collapse double spaces from removals
 
     return decoded;
   };

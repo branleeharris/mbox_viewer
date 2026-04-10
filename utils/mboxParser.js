@@ -621,4 +621,7 @@ function cleanupEncodingIssues(text) {
     .replace(/Ã§/g, 'ç')
     .replace(/Ã€/g, 'À')
     .replace(/Ã‰/g, 'É')
+    // Clean up orphaned â not part of a real word (e.g., "9:38â PM")
+    .replace(/â(?=[^a-zA-ZÀ-ÿ]|$)/g, ' ')
+    .replace(/  +/g, ' ')
 }
