@@ -386,11 +386,10 @@ export default function EmailView({ conversation, searchTerm }) {
     const totalEmails = processedEmails.length;
 
     processedEmails.forEach((processed, index) => {
-      const { email, content, textParsed, htmlParsed, isHtml } = processed;
-      const parsed = (isHtml && htmlParsed) ? htmlParsed : textParsed;
-      const newContent = parsed?.newContent || '';
-
-      const useHtml = isHtml && !!content.html;
+      const { email, content, textParsed } = processed;
+      // For print, always use plain text quote detection — it's the most
+      // reliable and avoids nested HTML structures causing indentation drift
+      const newContent = textParsed?.newContent || content.text || '';
       const dateStr = formatDate(email.date);
 
       htmlContent += `
@@ -405,7 +404,7 @@ export default function EmailView({ conversation, searchTerm }) {
 
           <div class="email-body">
             ${newContent
-              ? (useHtml ? newContent : '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>')
+              ? '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'
               : '<em>No additional message</em>'}
           </div>
 
@@ -520,12 +519,17 @@ export default function EmailView({ conversation, searchTerm }) {
         <div style={{ paddingTop: '16px', paddingBottom: '16px' }}>
           {processedEmails.map((processed, index) => {
             const { email, content, textParsed, htmlParsed, isHtml } = processed;
-            const parsed = (isHtml && htmlParsed) ? htmlParsed : textParsed;
+            // Prefer whichever parse result actually found quotes;
+            // fall back to HTML result if neither found quotes and we have HTML
+            const parsed = (htmlParsed?.hasQuotes) ? htmlParsed
+              : (textParsed?.hasQuotes) ? textParsed
+              : (isHtml && htmlParsed) ? htmlParsed : textParsed;
 
-            // In chat mode, prefer HTML content rendered cleanly; in full mode, respect activeTab
-            const useHtml = viewMode === 'chat'
+            // Use HTML rendering only if we're using HTML-parsed content
+            const usingHtmlParsed = parsed === htmlParsed;
+            const useHtml = usingHtmlParsed && (viewMode === 'chat'
               ? (isHtml && !!content.html)
-              : (activeTab === 'html' && !!content.html);
+              : (activeTab === 'html' && !!content.html));
 
             const displayNewContent = searchTerm && parsed?.newContent
               ? highlightText(parsed.newContent)
