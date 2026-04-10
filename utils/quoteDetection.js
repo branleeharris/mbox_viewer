@@ -21,8 +21,8 @@ export function extractNewContent(text, isHtml = false) {
 function extractFromPlainText(text) {
   // Strategy 1: "On [date], [name] wrote:" markers (Gmail, Apple Mail, Thunderbird)
   const onWrotePatterns = [
-    /^On .+wrote:\s*$/m,
     /^On .+<.+@.+> wrote:\s*$/m,
+    /^On .+wrote:\s*$/m,
     /^\d{4}-\d{2}-\d{2} .+ <.+@.+>:\s*$/m,
   ];
 
@@ -36,15 +36,30 @@ function extractFromPlainText(text) {
   // Strategy 2: Consecutive ">" quoted lines (2+ lines starting with >)
   const quotedBlockMatch = text.match(/^(>[\t ]*.*\n?){2,}/m);
   if (quotedBlockMatch) {
-    const blockStart = text.indexOf(quotedBlockMatch[0]);
+    const blockStart = quotedBlockMatch.index;
     const textBefore = text.substring(0, blockStart);
     const linesBeforeBlock = textBefore.trimEnd().split('\n');
-    const lastLineBefore = linesBeforeBlock[linesBeforeBlock.length - 1] || '';
-    if (/^On .+wrote:\s*$/.test(lastLineBefore.trim()) || /^.*<.+@.+>.*wrote:\s*$/.test(lastLineBefore.trim())) {
-      const adjustedStart = textBefore.lastIndexOf(lastLineBefore);
+    // Walk backward to find the start of a multi-line attribution (e.g., Gmail wraps
+    // "On Mon, Jan 1, 2024 at 10:00 AM Alice\n<alice@example.com> wrote:")
+    let attributionStartIndex = -1;
+    for (let i = linesBeforeBlock.length - 1; i >= 0 && i >= linesBeforeBlock.length - 3; i--) {
+      const line = linesBeforeBlock[i].trim();
+      if (/^On .+/.test(line)) {
+        // Found the "On ..." start of the attribution
+        const linePos = textBefore.lastIndexOf(linesBeforeBlock[i]);
+        attributionStartIndex = linePos;
+        break;
+      }
+      if (/wrote:\s*$/.test(line) || /^.*<.+@.+>/.test(line)) {
+        // This is a continuation line of the attribution, keep looking
+        continue;
+      }
+      break;
+    }
+    if (attributionStartIndex >= 0) {
       return {
-        newContent: text.substring(0, adjustedStart).trim(),
-        quotedContent: text.substring(adjustedStart).trim(),
+        newContent: text.substring(0, attributionStartIndex).trim(),
+        quotedContent: text.substring(attributionStartIndex).trim(),
         hasQuotes: true,
       };
     }
@@ -111,7 +126,7 @@ function extractFromHtml(html) {
   }
 
   // Strategy 4: Text patterns inside HTML
-  const htmlOnWrotePattern = /On\s(?:<[^>]*>|\s)*.+(?:<[^>]*>|\s)*wrote:\s*(?:<[^>]*>)*/i;
+  const htmlOnWrotePattern = /On\s(?:<[^>]*>|\s)*.{1,200}?(?:<[^>]*>|\s)*wrote:\s*(?:<[^>]*>)*/i;
   const htmlOnWroteMatch = html.match(htmlOnWrotePattern);
   if (htmlOnWroteMatch) {
     return splitAtMatch(html, htmlOnWroteMatch);
