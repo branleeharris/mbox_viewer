@@ -594,35 +594,63 @@ function normalizeCharset(charset) {
 function cleanupEncodingIssues(text) {
   if (!text) return '';
   
-  // Fix common encoding issues
-  return text
-    // Fix the "Â" non-breaking space issue (very common encoding error)
-    .replace(/Â /g, ' ')
-    .replace(/Â/g, '')
-    // Fix mojibake: longer sequences first to avoid partial matches
-    .replace(/â€œ/g, '\u201c') // Left double quote
-    .replace(/â€\u009d/g, '\u201d') // Right double quote
-    .replace(/â€˜/g, '\u2018') // Left single quote
-    .replace(/â€™/g, '\u2019') // Right single quote
-    .replace(/â€"/g, '\u2014') // Em dash
-    .replace(/â€"/g, '\u2013') // En dash
-    .replace(/â€¦/g, '\u2026') // Ellipsis
-    .replace(/â€¯/g, ' ')     // Narrow no-break space
-    .replace(/Â¯/g, '')       // Orphaned macron from partial cleanup
-    .replace(/¯/g, '')        // Standalone orphaned macron
-    .replace(/Ã©/g, 'é')
-    .replace(/Ã¨/g, 'è')
-    .replace(/Ã«/g, 'ë')
-    .replace(/Ã¯/g, 'ï')
-    .replace(/Ã®/g, 'î')
-    .replace(/Ã´/g, 'ô')
-    .replace(/Ã¹/g, 'ù')
-    .replace(/Ã»/g, 'û')
-    .replace(/Ã§/g, 'ç')
-    .replace(/Ã€/g, 'À')
-    .replace(/Ã‰/g, 'É')
-    // Clean up orphaned mojibake remnants not part of real words
-    .replace(/â(?=[^a-zA-ZÀ-ÿ]|$)/g, ' ')
-    .replace(/€(?=[^a-zA-Z0-9]|$)/g, '')   // orphaned euro sign from mojibake
-    .replace(/  +/g, ' ')
+  // Fix common encoding issues using byte-level pattern matching
+  let result = text;
+
+  // Fix the "Â" non-breaking space issue (very common encoding error)
+  result = result.replace(/Â /g, ' ').replace(/Â(?=[^a-zA-ZÀ-ÿ])/g, '');
+
+  // Fix UTF-8 mojibake: 3-byte sequences (E2 80 xx) interpreted as Windows-1252/Latin-1
+  // Use raw byte values to match regardless of how the JS engine represents them
+  const mojibakeMap = {
+    '\u00E2\u0080\u0093': '\u2013', // en dash
+    '\u00E2\u0080\u0094': '\u2014', // em dash
+    '\u00E2\u0080\u0098': '\u2018', // left single quote
+    '\u00E2\u0080\u0099': '\u2019', // right single quote (apostrophe)
+    '\u00E2\u0080\u009C': '\u201C', // left double quote
+    '\u00E2\u0080\u009D': '\u201D', // right double quote
+    '\u00E2\u0080\u00A6': '\u2026', // ellipsis
+    '\u00E2\u0080\u00AF': ' ',      // narrow no-break space
+    '\u00E2\u0080\u00A2': '\u2022', // bullet
+    '\u00C2\u00A0': ' ',            // non-breaking space
+  };
+
+  for (const [mojibake, replacement] of Object.entries(mojibakeMap)) {
+    result = result.split(mojibake).join(replacement);
+  }
+
+  // Also handle the visible-character form of mojibake
+  // (when Windows-1252 maps bytes to printable characters)
+  const visibleMojibakeMap = {
+    'â€™': '\u2019', // right single quote
+    'â€˜': '\u2018', // left single quote
+    'â€œ': '\u201C', // left double quote
+    'â€"': '\u2014', // em dash
+    'â€"': '\u2013', // en dash
+    'â€¦': '\u2026', // ellipsis
+    'â€¯': ' ',      // narrow no-break space
+  };
+
+  for (const [mojibake, replacement] of Object.entries(visibleMojibakeMap)) {
+    result = result.split(mojibake).join(replacement);
+  }
+
+  // Fix 2-byte Latin character mojibake (C3 xx)
+  const latinMojibakeMap = {
+    'Ã©': 'é', 'Ã¨': 'è', 'Ã«': 'ë', 'Ã¯': 'ï',
+    'Ã®': 'î', 'Ã´': 'ô', 'Ã¹': 'ù', 'Ã»': 'û',
+    'Ã§': 'ç', 'Ã€': 'À', 'Ã‰': 'É',
+  };
+
+  for (const [mojibake, replacement] of Object.entries(latinMojibakeMap)) {
+    result = result.split(mojibake).join(replacement);
+  }
+
+  // Clean up any remaining orphaned mojibake fragments
+  result = result
+    .replace(/\u00E2\u0080./g, '')   // any remaining â€x sequences
+    .replace(/¯/g, '')               // orphaned macron
+    .replace(/  +/g, ' ');
+
+  return result
 }

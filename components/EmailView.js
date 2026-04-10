@@ -21,22 +21,67 @@ export default function EmailView({ conversation, searchTerm }) {
       // Fix problematic unicode spaces
       .replace(/\u202F/g, ' ')  // narrow no-break space
       .replace(/\u00A0/g, ' ')  // non-breaking space
-      .replace(/\u2009/g, ' ')  // thin space
-      // Fix mojibake: replace complete multi-byte sequences (not individual chars)
-      .replace(/\u00e2\u20ac\u201c/g, '\u2014') // em dash
-      .replace(/\u00e2\u20ac\u201d/g, '\u2013') // en dash
-      .replace(/\u00e2\u20ac\u0153/g, '\u201c') // left double quote
-      .replace(/\u00e2\u20ac\u009d/g, '\u201d') // right double quote
-      .replace(/\u00e2\u20ac\u2122/g, '\u2019') // right single quote / apostrophe
-      .replace(/\u00e2\u20ac\u02dc/g, '\u2018') // left single quote
-      .replace(/\u00e2\u20ac\u00a6/g, '\u2026') // ellipsis
-      .replace(/\u00e2\u20ac\u00af/g, ' ')       // narrow no-break space mojibake
-      .replace(/\u00c2\u00af/g, ' ')              // another NNBSP mojibake variant
-      .replace(/\u00af/g, '')                     // orphaned macron from partial cleanup
-      // Clean up orphaned â and € not part of real words (mojibake remnants)
-      .replace(/\u00e2(?=[^a-zA-Z\u00c0-\u00ff]|$)/g, ' ')
-      .replace(/\u20ac(?=[^a-zA-Z0-9]|$)/g, '')  // orphaned euro sign from mojibake
-      .replace(/  +/g, ' ');                      // collapse double spaces from removals
+      .replace(/\u2009/g, ' ') // thin space
+      // Fix UTF-8 mojibake (double-encoded text)
+      .replace(/\xC3\xA9/g, 'é')
+      .replace(/\xC3\xA8/g, 'è')
+      .replace(/\xC3\xAB/g, 'ë')
+      .replace(/\xC3\xA7/g, 'ç');
+
+    // Use a function to fix remaining mojibake by attempting re-encoding
+    decoded = fixMojibake(decoded);
+
+    return decoded;
+  };
+
+  // Fix mojibake by detecting common UTF-8-as-Latin1 patterns and replacing them
+  const fixMojibake = (text) => {
+    if (!text) return text;
+
+    // Map of mojibake sequences to their correct Unicode characters
+    // These are UTF-8 bytes E2 80 xx interpreted as Windows-1252
+    const mojibakeMap = {
+      '\u00E2\u0080\u0093': '\u2013', // en dash
+      '\u00E2\u0080\u0094': '\u2014', // em dash
+      '\u00E2\u0080\u0098': '\u2018', // left single quote
+      '\u00E2\u0080\u0099': '\u2019', // right single quote (apostrophe)
+      '\u00E2\u0080\u009C': '\u201C', // left double quote
+      '\u00E2\u0080\u009D': '\u201D', // right double quote
+      '\u00E2\u0080\u00A6': '\u2026', // ellipsis
+      '\u00E2\u0080\u00AF': ' ',      // narrow no-break space
+      '\u00E2\u0080\u00A2': '\u2022', // bullet
+      '\u00C2\u00A0': ' ',            // non-breaking space (C2 A0)
+    };
+
+    let result = text;
+    for (const [mojibake, replacement] of Object.entries(mojibakeMap)) {
+      result = result.split(mojibake).join(replacement);
+    }
+
+    // Also handle the case where Windows-1252 interpretation produced
+    // visible characters (â€™ etc.) instead of control chars
+    const visibleMojibakeMap = {
+      'â€™': '\u2019', // right single quote
+      'â€˜': '\u2018', // left single quote
+      'â€œ': '\u201C', // left double quote
+      'â€\u009D': '\u201D', // right double quote
+      'â€"': '\u2014', // em dash
+      'â€"': '\u2013', // en dash
+      'â€¦': '\u2026', // ellipsis
+      'â€¯': ' ',      // narrow no-break space
+    };
+
+    for (const [mojibake, replacement] of Object.entries(visibleMojibakeMap)) {
+      result = result.split(mojibake).join(replacement);
+    }
+
+    // Clean up any remaining orphaned mojibake fragments
+    result = result
+      .replace(/\u00E2\u0080./g, '')   // any remaining â€x sequences
+      .replace(/\u00C2(?=[\u0080-\u00BF])/g, '') // Â followed by control-range char
+      .replace(/  +/g, ' ');           // collapse double spaces
+
+    return result;
 
     return decoded;
   };
