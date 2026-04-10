@@ -128,3 +128,90 @@ pre {
 .gmail-trimmed:hover {
   color: #222;
 }
+
+/* View mode toggle */
+.view-toggle {
+  display: flex;
+  background: #e8eaed;
+  border-radius: 20px;
+  padding: 2px;
+}
+
+.view-toggle button {
+  padding: 4px 14px;
+  border-radius: 18px;
+  font-size: 12px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+  background: transparent;
+  color: #5f6368;
+  font-family: inherit;
+}
+
+.view-toggle button.active {
+  background: #1a73e8;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* Chat mode message layout */
+.chat-message {
+  display: flex;
+  gap: 10px;
+  padding: 0 24px;
+  margin-bottom: 16px;
+  align-items: flex-start;
+}
+
+.chat-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.chat-sender {
+  font-weight: 600;
+  font-size: 13px;
+  color: #202124;
+}
+
+.chat-time {
+  font-size: 11px;
+  color: #5f6368;
+}
+
+.chat-body {
+  font-size: 14px;
+  color: #202124;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.chat-body-empty {
+  font-style: italic;
+  color: #5f6368;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* Full email mode quoted content */
+.full-email-recipients {
+  font-size: 12px;
+  color: #5f6368;
+  margin-top: 2px;
+}
+
+.full-email-quoted {
+  border-left: 2px solid #e8eaed;
+  padding-left: 12px;
+  color: #5f6368;
+  margin-top: 12px;
+}
