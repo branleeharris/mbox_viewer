@@ -18,21 +18,21 @@ export default function EmailView({ conversation, searchTerm }) {
 
     // Fix common unicode character issues
     decoded = decoded
-      // Fix narrow no-break space (U+202F) - commonly appears as â¯
-      .replace(/\u202F/g, ' ')
-      // Fix other common problematic spaces
-      .replace(/\u00A0/g, ' ') // non-breaking space
-      .replace(/\u2009/g, ' ') // thin space
-      // Fix em dash and en dash encoding issues
-      .replace(/â/g, '—')
-      .replace(/â/g, '–')
-      // Fix smart quotes
-      .replace(/â/g, '"')
-      .replace(/â/g, '"')
-      .replace(/â/g, "'")
-      .replace(/â/g, "'")
-      // Fix ellipsis
-      .replace(/â¦/g, '...');
+      // Fix problematic unicode spaces
+      .replace(/\u202F/g, ' ')  // narrow no-break space
+      .replace(/\u00A0/g, ' ')  // non-breaking space
+      .replace(/\u2009/g, ' ')  // thin space
+      // Fix mojibake: replace complete multi-byte sequences (not individual chars)
+      .replace(/\u00e2\u20ac\u201c/g, '\u2014') // em dash
+      .replace(/\u00e2\u20ac\u201d/g, '\u2013') // en dash
+      .replace(/\u00e2\u20ac\u0153/g, '\u201c') // left double quote
+      .replace(/\u00e2\u20ac\u009d/g, '\u201d') // right double quote
+      .replace(/\u00e2\u20ac\u2122/g, '\u2019') // right single quote / apostrophe
+      .replace(/\u00e2\u20ac\u02dc/g, '\u2018') // left single quote
+      .replace(/\u00e2\u20ac\u00a6/g, '\u2026') // ellipsis
+      .replace(/\u00e2\u20ac\u00af/g, ' ')       // narrow no-break space mojibake
+      .replace(/\u00c2\u00af/g, ' ')              // another NNBSP mojibake variant
+      .replace(/\u00af/g, '')                     // orphaned macron from partial cleanup;
 
     return decoded;
   };

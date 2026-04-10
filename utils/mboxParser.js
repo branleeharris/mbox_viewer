@@ -599,14 +599,17 @@ function cleanupEncodingIssues(text) {
     // Fix the "Â" non-breaking space issue (very common encoding error)
     .replace(/Â /g, ' ')
     .replace(/Â/g, '')
-    // Fix other common encoding issues using Unicode escape sequences
-    .replace(/â€œ/g, '"')
-    .replace(/â€/g, '"')
+    // Fix mojibake: longer sequences first to avoid partial matches
+    .replace(/â€œ/g, '\u201c') // Left double quote
+    .replace(/â€\u009d/g, '\u201d') // Right double quote
     .replace(/â€˜/g, '\u2018') // Left single quote
     .replace(/â€™/g, '\u2019') // Right single quote
     .replace(/â€"/g, '\u2014') // Em dash
     .replace(/â€"/g, '\u2013') // En dash
     .replace(/â€¦/g, '\u2026') // Ellipsis
+    .replace(/â€¯/g, ' ')     // Narrow no-break space
+    .replace(/Â¯/g, '')       // Orphaned macron from partial cleanup
+    .replace(/¯/g, '')        // Standalone orphaned macron
     .replace(/Ã©/g, 'é')
     .replace(/Ã¨/g, 'è')
     .replace(/Ã«/g, 'ë')
