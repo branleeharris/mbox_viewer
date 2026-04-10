@@ -1,18 +1,11 @@
 // File: components/EmailView.js
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { extractNewContent } from '../utils/quoteDetection';
 
 export default function EmailView({ conversation, searchTerm }) {
-  const [expandedEmails, setExpandedEmails] = useState(new Set());
   const [activeTab, setActiveTab] = useState('html');
   const [expandedRecipients, setExpandedRecipients] = useState(new Set());
-  const [expandedQuotes, setExpandedQuotes] = useState(new Set());
-
-  // Expand the most recent email by default
-  useEffect(() => {
-    if (conversation && conversation.emails && conversation.emails.length > 0) {
-      setExpandedEmails(new Set([conversation.emails.length - 1]));
-    }
-  }, [conversation]);
+  const [viewMode, setViewMode] = useState('chat'); // 'chat' | 'full'
 
   // Decode HTML entities and fix character encoding
   const decodeHtmlEntities = (text) => {
@@ -104,176 +97,22 @@ export default function EmailView({ conversation, searchTerm }) {
     return { text: cleanedText, html: cleanedHtml };
   };
 
-  // Normalize text for comparison (strip HTML, normalize whitespace, lowercase)
-  const normalizeTextForComparison = (text, isHtml) => {
-    if (!text) return '';
-
-    let normalized = text;
-
-    // Strip HTML tags if HTML content
-    if (isHtml) {
-      // Remove script and style elements completely
-      normalized = normalized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-      normalized = normalized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-      // Remove HTML tags
-      normalized = normalized.replace(/<[^>]+>/g, ' ');
-      // Decode common HTML entities
-      normalized = normalized.replace(/&nbsp;/g, ' ');
-      normalized = normalized.replace(/&amp;/g, '&');
-      normalized = normalized.replace(/&lt;/g, '<');
-      normalized = normalized.replace(/&gt;/g, '>');
-      normalized = normalized.replace(/&quot;/g, '"');
-    }
-
-    // Normalize whitespace
-    normalized = normalized.replace(/\s+/g, ' ');
-    normalized = normalized.trim();
-
-    // Convert to lowercase for comparison
-    normalized = normalized.toLowerCase();
-
-    return normalized;
-  };
-
-  // Split text into chunks (lines/paragraphs) for comparison
-  const chunkText = (text) => {
-    if (!text) return [];
-
-    // Split by newlines and filter out very short chunks
-    const chunks = text
-      .split(/\n+/)
-      .map(chunk => chunk.trim())
-      .filter(chunk => chunk.length >= 20); // Minimum 20 chars to avoid false positives
-
-    return chunks;
-  };
-
-  // Find new content by comparing against previous emails (content deduplication)
-  const findNewContent = (currentText, previousEmailsContent, isHtml) => {
-    if (!currentText) return { newContent: '', quotedContent: '', hasQuotes: false };
-    if (!previousEmailsContent || previousEmailsContent.length === 0) {
-      // No previous emails, so all content is new
-      return { newContent: currentText, quotedContent: '', hasQuotes: false };
-    }
-
-    // Normalize current email
-    const normalizedCurrent = normalizeTextForComparison(currentText, isHtml);
-    const currentChunks = chunkText(normalizedCurrent);
-
-    // Build a set of all chunks from previous emails
-    const previousChunksSet = new Set();
-    previousEmailsContent.forEach(prevEmail => {
-      const normalizedPrev = normalizeTextForComparison(prevEmail, isHtml);
-      const prevChunks = chunkText(normalizedPrev);
-      prevChunks.forEach(chunk => previousChunksSet.add(chunk));
-    });
-
-    // Find which chunks in current email are new (not in previous emails)
-    const newChunksIndices = new Set();
-    const quotedChunksIndices = new Set();
-
-    currentChunks.forEach((chunk, index) => {
-      if (previousChunksSet.has(chunk)) {
-        quotedChunksIndices.add(index);
-      } else {
-        newChunksIndices.add(index);
-      }
-    });
-
-    // If most content is new, return original content
-    if (quotedChunksIndices.size === 0) {
-      return { newContent: currentText, quotedContent: '', hasQuotes: false };
-    }
-
-    // Split original text to separate new from quoted
-    // This is a simple heuristic: keep text at start until we hit quoted chunks
-    const originalLines = currentText.split(/\n+/);
-    const newLines = [];
-    const quotedLines = [];
-    let inQuotedSection = false;
-    let currentChunkIndex = 0;
-
-    for (const line of originalLines) {
-      const lineNormalized = normalizeTextForComparison(line, isHtml);
-
-      if (lineNormalized.length >= 20) {
-        // This is a substantial line, check if it's quoted
-        if (quotedChunksIndices.has(currentChunkIndex)) {
-          inQuotedSection = true;
-          quotedLines.push(line);
-        } else if (newChunksIndices.has(currentChunkIndex)) {
-          if (!inQuotedSection) {
-            newLines.push(line);
-          } else {
-            quotedLines.push(line);
-          }
-        }
-        currentChunkIndex++;
-      } else {
-        // Short line, attach it to current section
-        if (inQuotedSection) {
-          quotedLines.push(line);
-        } else {
-          newLines.push(line);
-        }
-      }
-    }
-
-    // If we couldn't separate cleanly, fall back to keeping first 40% as new
-    if (newLines.length === 0 && originalLines.length > 0) {
-      const splitPoint = Math.ceil(originalLines.length * 0.4);
-      return {
-        newContent: originalLines.slice(0, splitPoint).join('\n').trim(),
-        quotedContent: originalLines.slice(splitPoint).join('\n').trim(),
-        hasQuotes: true
-      };
-    }
-
-    return {
-      newContent: newLines.join('\n').trim() || currentText,
-      quotedContent: quotedLines.join('\n').trim(),
-      hasQuotes: quotedLines.length > 0
-    };
-  };
-
-  // Wrapper function that maintains the same interface as before
-  const parseQuotedContent = (text, isHtml, previousEmailsContent = []) => {
-    return findNewContent(text, previousEmailsContent, isHtml);
-  };
-
   // Pre-process emails with content deduplication for screen display
   const processedEmails = useMemo(() => {
-    if (!conversation || !conversation.emails) return [];
+    if (!conversation?.emails) return [];
 
-    // Sort emails chronologically for processing
-    const sortedEmails = [...conversation.emails].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const previousEmailsContent = [];
-    const processed = [];
+    const sorted = [...conversation.emails].sort(
+      (a, b) => new Date(a.date) - new Date(b.date)
+    );
 
-    sortedEmails.forEach((email, index) => {
+    return sorted.map((email) => {
       const content = cleanEmailContent(email);
-      const isHtml = email.bodyHtml && content.html;
-      const currentContent = isHtml ? content.html : content.text;
+      const isHtml = !!email.bodyHtml && !!content.html;
+      const textParsed = extractNewContent(content.text, false);
+      const htmlParsed = isHtml ? extractNewContent(content.html, true) : null;
 
-      // Parse with deduplication
-      const parsed = parseQuotedContent(currentContent, isHtml, previousEmailsContent);
-
-      // Store processed result with original index
-      const originalIndex = conversation.emails.indexOf(email);
-      processed.push({
-        email,
-        originalIndex,
-        content,
-        parsed,
-        isHtml
-      });
-
-      // Add to previous emails for next iteration
-      previousEmailsContent.push(currentContent);
+      return { email, content, textParsed, htmlParsed, isHtml };
     });
-
-    // Return in original conversation order
-    return processed.sort((a, b) => a.originalIndex - b.originalIndex);
   }, [conversation]);
 
   if (!conversation) return null;
@@ -328,32 +167,6 @@ export default function EmailView({ conversation, searchTerm }) {
     return namePart || from;
   };
 
-  // Toggle quote expansion
-  const toggleQuoteExpansion = (index) => {
-    setExpandedQuotes(prevExpanded => {
-      const newExpanded = new Set(prevExpanded);
-      if (newExpanded.has(index)) {
-        newExpanded.delete(index);
-      } else {
-        newExpanded.add(index);
-      }
-      return newExpanded;
-    });
-  };
-
-  // Toggle email expansion
-  const toggleEmailExpansion = (index) => {
-    setExpandedEmails(prevExpanded => {
-      const newExpanded = new Set(prevExpanded);
-      if (newExpanded.has(index)) {
-        newExpanded.delete(index);
-      } else {
-        newExpanded.add(index);
-      }
-      return newExpanded;
-    });
-  };
-  
   // Toggle recipient list expansion
   const toggleRecipientExpansion = (index) => {
     setExpandedRecipients(prevExpanded => {
