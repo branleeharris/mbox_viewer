@@ -110,26 +110,21 @@ function extractFromPlainText(text) {
 }
 
 function extractFromHtml(html) {
-  // Strategy 1: <blockquote> with type="cite" or Gmail's class
-  const blockquotePatterns = [
+  // Strategy 1: HTML-specific quote markers (blockquote, gmail_quote)
+  const htmlQuotePatterns = [
     /<blockquote[^>]*type=["']cite["'][^>]*>/i,
     /<blockquote[^>]*class=["'][^"']*gmail_quote[^"']*["'][^>]*>/i,
+    /<div[^>]*class=["'][^"']*gmail_quote[^"']*["'][^>]*>/i,
   ];
 
-  for (const pattern of blockquotePatterns) {
+  for (const pattern of htmlQuotePatterns) {
     const match = html.match(pattern);
     if (match) {
       return splitAtMatch(html, match);
     }
   }
 
-  // Strategy 2: <div class="gmail_quote">
-  const gmailQuoteMatch = html.match(/<div[^>]*class=["'][^"']*gmail_quote[^"']*["'][^>]*>/i);
-  if (gmailQuoteMatch) {
-    return splitAtMatch(html, gmailQuoteMatch);
-  }
-
-  // Strategy 3: Generic <blockquote> (only if it appears after some content)
+  // Strategy 2: Generic <blockquote> (only if meaningful content precedes it)
   const genericBlockquoteMatch = html.match(/<blockquote[^>]*>/i);
   if (genericBlockquoteMatch) {
     const beforeBlockquote = html.substring(0, genericBlockquoteMatch.index).replace(/<[^>]*>/g, '').trim();
@@ -138,33 +133,97 @@ function extractFromHtml(html) {
     }
   }
 
-  // Strategy 4: Text patterns inside HTML
-  const htmlOnWrotePattern = /On\s(?:<[^>]*>|\s)*.{1,200}?(?:<[^>]*>|\s)*wrote:\s*(?:<[^>]*>)*/i;
-  const htmlOnWroteMatch = html.match(htmlOnWrotePattern);
-  if (htmlOnWroteMatch) {
-    return splitAtMatch(html, htmlOnWroteMatch);
-  }
+  // Strategy 3: Strip HTML to plain text, run plain text detection, map back
+  // This catches all text-based quote patterns (On...wrote:, dividers, Outlook
+  // headers) regardless of how they're broken up by HTML tags.
+  const stripped = stripHtmlToText(html);
+  const plainResult = extractFromPlainText(stripped);
 
-  // Divider patterns in HTML
-  const htmlDividerPatterns = [
-    /-{2,}\s*Original Message\s*-{2,}/i,
-    /-{3,}\s*Forwarded message\s*-{3,}/i,
-  ];
+  if (plainResult.hasQuotes && plainResult.newContent) {
+    // Find where the new content ends in the original HTML
+    // by matching the last ~40 chars of newContent against the HTML
+    const newContentText = plainResult.newContent;
+    const tailLength = Math.min(40, newContentText.length);
+    const tail = newContentText.slice(-tailLength);
 
-  for (const pattern of htmlDividerPatterns) {
-    const match = html.match(pattern);
-    if (match) {
-      const tagBoundaryIndex = findPrecedingTagBoundary(html, match.index);
+    // Build a regex that matches the tail text with optional HTML tags between chars
+    const escapedTail = tail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const flexPattern = escapedTail.split('').join('(?:<[^>]*>|\\s)*');
+    const tailRegex = new RegExp(flexPattern, 'i');
+    const tailMatch = html.match(tailRegex);
+
+    if (tailMatch) {
+      // Split after the matched tail text
+      const splitPos = tailMatch.index + tailMatch[0].length;
+      // Walk forward past any remaining tags/whitespace to find a clean boundary
+      let cleanPos = splitPos;
+      while (cleanPos < html.length) {
+        if (html[cleanPos] === '<') {
+          const closeTag = html.indexOf('>', cleanPos);
+          if (closeTag !== -1) {
+            cleanPos = closeTag + 1;
+          } else {
+            break;
+          }
+        } else if (/\s/.test(html[cleanPos])) {
+          cleanPos++;
+        } else {
+          break;
+        }
+      }
       return {
-        newContent: html.substring(0, tagBoundaryIndex).trim(),
-        quotedContent: html.substring(tagBoundaryIndex).trim(),
+        newContent: html.substring(0, splitPos).trim(),
+        quotedContent: html.substring(cleanPos).trim(),
         hasQuotes: true,
       };
     }
+
+    // Fallback: use a proportional split based on the plain text ratio
+    const ratio = newContentText.length / stripped.length;
+    const approxSplitPos = Math.floor(html.length * ratio);
+    const boundaryPos = findNearestTagBoundary(html, approxSplitPos);
+    return {
+      newContent: html.substring(0, boundaryPos).trim(),
+      quotedContent: html.substring(boundaryPos).trim(),
+      hasQuotes: true,
+    };
   }
 
   // No quoted content detected
   return { newContent: html, quotedContent: '', hasQuotes: false };
+}
+
+/**
+ * Strip HTML tags to plain text for quote boundary detection.
+ */
+function stripHtmlToText(html) {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n))
+    .replace(/\r\n/g, '\n');
+}
+
+/**
+ * Find the nearest HTML tag boundary to a position.
+ */
+function findNearestTagBoundary(html, position) {
+  // Look forward for the next tag start
+  for (let i = position; i < Math.min(position + 100, html.length); i++) {
+    if (html[i] === '<') return i;
+  }
+  // Look backward
+  for (let i = position; i > Math.max(position - 100, 0); i--) {
+    if (html[i] === '<') return i;
+  }
+  return position;
 }
 
 function splitAtMatch(text, match) {
@@ -176,16 +235,3 @@ function splitAtMatch(text, match) {
   };
 }
 
-function findPrecedingTagBoundary(html, position) {
-  let i = position;
-  while (i > 0) {
-    if (html[i] === '<' && html[i + 1] !== '/') {
-      return i;
-    }
-    if (html[i] === '>' && i < position - 1) {
-      return i + 1;
-    }
-    i--;
-  }
-  return position;
-}
