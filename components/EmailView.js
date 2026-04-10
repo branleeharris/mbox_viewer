@@ -381,52 +381,41 @@ export default function EmailView({ conversation, searchTerm }) {
           </div>
     `;
 
-    // Add each email in the conversation
-    if (conversation.emails && conversation.emails.length > 0) {
-      // Sort emails by date (oldest first for printing)
-      const sortedEmails = [...conversation.emails].sort((a, b) => {
-        return new Date(a.date) - new Date(b.date);
-      });
+    // Add each email using pre-processed content (quotes already stripped)
+    const totalEmails = processedEmails.length;
 
-      const totalEmails = sortedEmails.length;
+    processedEmails.forEach((processed, index) => {
+      const { email, content, textParsed, htmlParsed, isHtml } = processed;
+      const parsed = (isHtml && htmlParsed) ? htmlParsed : textParsed;
+      const newContent = parsed?.newContent || '';
 
-      // Build up previous emails content as we go
-      const previousEmailsContent = [];
+      const useHtml = isHtml && !!content.html;
+      const dateStr = formatDate(email.date);
 
-      sortedEmails.forEach((email, index) => {
-        const content = cleanEmailContent(email);
-
-        // For printing, just use the content as-is without deduplication for now
-        // The deduplication is causing issues
-        const isHtml = email.bodyHtml && content.html;
-        const newContent = isHtml ? content.html : content.text;
-
-        // Format date more compactly
-        const dateStr = formatDate(email.date);
-
-        htmlContent += `
-          <div class="email">
-            <div class="email-number">Message ${index + 1} of ${totalEmails}</div>
-            <div class="email-header">
-              <div class="email-meta">
-                <div class="email-from">${email.from}</div>
-                <div class="email-date">${dateStr}</div>
-              </div>
+      htmlContent += `
+        <div class="email">
+          <div class="email-number">Message ${index + 1} of ${totalEmails}</div>
+          <div class="email-header">
+            <div class="email-meta">
+              <div class="email-from">${email.from}</div>
+              <div class="email-date">${dateStr}</div>
             </div>
-
-            <div class="email-body">
-              ${isHtml ? newContent : '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>'}
-            </div>
-
-            ${email.attachments && email.attachments.length > 0 ? `
-              <div class="attachments-info">
-                📎 ${email.attachments.length} attachment${email.attachments.length > 1 ? 's' : ''}: ${email.attachments.map(att => att.filename).join(', ')}
-              </div>
-            ` : ''}
           </div>
-        `;
-      });
-    }
+
+          <div class="email-body">
+            ${newContent
+              ? (useHtml ? newContent : '<pre>' + newContent.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>')
+              : '<em>No additional message</em>'}
+          </div>
+
+          ${email.attachments && email.attachments.length > 0 ? `
+            <div class="attachments-info">
+              📎 ${email.attachments.length} attachment${email.attachments.length > 1 ? 's' : ''}: ${email.attachments.map(att => att.filename).join(', ')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    });
 
     // Close the HTML content
     htmlContent += `
