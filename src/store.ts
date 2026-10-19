@@ -286,13 +286,16 @@ export const useStore = create<State>((set, get) => ({
             if (me.length) s.updateSettings({ meAddresses: me });
           }
           const dupText = duplicates ? ` · ${duplicates.toLocaleString()} duplicates skipped` : '';
-          s.showToast(
-            ev.cancelled
-              ? `Import stopped. ${imported.toLocaleString()} messages kept.`
-              : imported === 0 && duplicates > 0
-                ? `All ${duplicates.toLocaleString()} messages were already in your mailbox`
-                : `Imported ${imported.toLocaleString()} messages${dupText}`,
-          );
+          // Warnings (skipped zip/non-mail files, storage limits) must outlive the progress card.
+          const warnText = s.importWarnings.join(' ');
+          const summary = ev.cancelled
+            ? `Import stopped. ${imported.toLocaleString()} messages kept.`
+            : imported === 0 && duplicates > 0
+              ? `All ${duplicates.toLocaleString()} messages were already in your mailbox`
+              : imported === 0 && warnText
+                ? ''
+                : `Imported ${imported.toLocaleString()} messages${dupText}`;
+          s.showToast([summary, warnText].filter(Boolean).join('. '));
           // A Takeout of a single label may have nothing in the Inbox.
           if (startedEmpty && !s.counts.total.get('inbox') && s.messages.size) {
             location.hash = '#all';
@@ -422,9 +425,10 @@ export const useStore = create<State>((set, get) => ({
     clearTimeout(toastTimer);
     const id = ++toastSeq;
     set({ toast: { id, text, action } });
+    // Longer messages stay up longer so they can be read.
     toastTimer = setTimeout(() => {
       if (get().toast?.id === id) set({ toast: null });
-    }, 6000);
+    }, Math.min(15000, 5000 + text.length * 50));
   },
 
   setRoute(route) {
