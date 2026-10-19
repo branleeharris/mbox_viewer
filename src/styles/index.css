@@ -1,0 +1,211 @@
+@import 'tailwindcss';
+@import '@fontsource/roboto/400.css';
+@import '@fontsource/roboto/500.css';
+@import '@fontsource/roboto/700.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Gmail-like Material 3 palette. Components use these through Tailwind's
+   theme (bg-app, text-ink-2, ...) so dark mode is a single class switch. */
+:root {
+  --app: #f6f8fc;
+  --surface: #ffffff;
+  --row-read: #f2f6fc;
+  --row-unread: #ffffff;
+  --row-selected: #c2dbff;
+  --row-hover-shadow: inset 1px 0 0 #dadce0, inset -1px 0 0 #dadce0, 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  --search: #eaf1fb;
+  --hover: rgba(68, 71, 70, 0.08);
+  --press: rgba(68, 71, 70, 0.12);
+  --nav-active: #d3e3fd;
+  --nav-active-ink: #041e49;
+  --compose: #c2e7ff;
+  --compose-ink: #001d35;
+  --ink: #1f1f1f;
+  --ink-2: #444746;
+  --ink-3: #5f6368;
+  --line: #e1e3e1;
+  --line-strong: #c4c7c5;
+  --accent: #0b57d0;
+  --accent-soft: #d3e3fd;
+  --star: #f4b400;
+  --important: #e8a000;
+  --chip: #e9eef6;
+  --chip-ink: #444746;
+  --popover: #ffffff;
+  --scrim: rgba(32, 33, 36, 0.6);
+  --toast: #303030;
+  --toast-ink: #f2f2f2;
+  --danger: #b3261e;
+  --warning-bg: #fef7e0;
+  --warning-ink: #5c4300;
+  color-scheme: light;
+}
+
+.dark {
+  --app: #1b1b1b;
+  --surface: #202124;
+  --row-read: #202124;
+  --row-unread: #2a2b2e;
+  --row-selected: #004a77;
+  --row-hover-shadow: inset 1px 0 0 #3c4043, inset -1px 0 0 #3c4043, 0 1px 2px 0 rgba(0, 0, 0, 0.6), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
+  --search: #2d2f31;
+  --hover: rgba(227, 227, 227, 0.08);
+  --press: rgba(227, 227, 227, 0.12);
+  --nav-active: #004a77;
+  --nav-active-ink: #c2e7ff;
+  --compose: #004a77;
+  --compose-ink: #c2e7ff;
+  --ink: #e3e3e3;
+  --ink-2: #c4c7c5;
+  --ink-3: #9aa0a6;
+  --line: #3c4043;
+  --line-strong: #5f6368;
+  --accent: #a8c7fa;
+  --accent-soft: #0842a0;
+  --star: #fdd663;
+  --important: #fdd663;
+  --chip: #3c4043;
+  --chip-ink: #e3e3e3;
+  --popover: #2d2f31;
+  --scrim: rgba(0, 0, 0, 0.7);
+  --toast: #e3e3e3;
+  --toast-ink: #1f1f1f;
+  --danger: #f2b8b5;
+  --warning-bg: #3d3200;
+  --warning-ink: #fde293;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: 'Google Sans Text', 'Google Sans', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-display: 'Google Sans', 'Google Sans Text', Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --color-app: var(--app);
+  --color-surface: var(--surface);
+  --color-row-read: var(--row-read);
+  --color-row-unread: var(--row-unread);
+  --color-row-selected: var(--row-selected);
+  --color-search: var(--search);
+  --color-hover: var(--hover);
+  --color-press: var(--press);
+  --color-nav-active: var(--nav-active);
+  --color-nav-active-ink: var(--nav-active-ink);
+  --color-compose: var(--compose);
+  --color-compose-ink: var(--compose-ink);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-star: var(--star);
+  --color-important: var(--important);
+  --color-chip: var(--chip);
+  --color-chip-ink: var(--chip-ink);
+  --color-popover: var(--popover);
+  --color-scrim: var(--scrim);
+  --color-toast: var(--toast);
+  --color-toast-ink: var(--toast-ink);
+  --color-danger: var(--danger);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-ink: var(--warning-ink);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--app);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Gmail-style thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.row-hover:hover {
+  box-shadow: var(--row-hover-shadow);
+  z-index: 1;
+  position: relative;
+}
+
+.popover-shadow {
+  box-shadow: 0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.card-shadow {
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 2px 6px 2px rgba(60, 64, 67, 0.15);
+}
+
+@keyframes mv-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.animate-indeterminate {
+  animation: mv-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes mv-toast-in {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.animate-toast {
+  animation: mv-toast-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Printing: hide the app and show only the print view. */
+#print-root {
+  display: none;
+}
+
+/* While a print is being prepared, lay it out off-screen so iframes can size themselves. */
+#print-root:not(:empty) {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 760px;
+  background: #fff;
+}
+
+@media print {
+  #root {
+    display: none !important;
+  }
+  #print-root,
+  #print-root:not(:empty) {
+    display: block;
+    position: static;
+    width: auto;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}

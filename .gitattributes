@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# mbox fixtures must keep their exact bytes
+*.mbox binary
+*.eml binary
