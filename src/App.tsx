@@ -7,6 +7,7 @@ import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { MailList } from './components/MailList';
 import { ThreadView } from './components/ThreadView';
+import { PeopleTimeline } from './components/PeopleTimeline';
 import { Welcome } from './components/Welcome';
 import { ImportStatus, Toast, DropOverlay } from './components/StatusLayer';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -85,10 +86,13 @@ function Splash() {
 
 function Shell() {
   const threadId = useStore((s) => s.route.threadId);
+  const view = useStore((s) => s.route.view);
   const pane = useStore((s) => s.settings.readingPane);
   const wide = useWide(1024);
   const roomy = useWide(700);
-  const split = pane === 'right' && wide;
+  // The people timeline has no message list, so it never splits.
+  const people = view.kind === 'people' ? view : null;
+  const split = pane === 'right' && wide && !people;
 
   return (
     <div className="flex h-full flex-col">
@@ -114,6 +118,8 @@ function Shell() {
             </div>
           ) : threadId ? (
             <ThreadView threadId={threadId} split={false} />
+          ) : people ? (
+            <PeopleTimeline view={people} />
           ) : (
             // Phones get Gmail's three-line rows.
             <MailList split={!roomy} />

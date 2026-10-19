@@ -73,6 +73,13 @@ import I_eject from '@material-symbols/svg-400/outlined/eject.svg?react';
 import I_lock from '@material-symbols/svg-400/outlined/lock.svg?react';
 import I_add from '@material-symbols/svg-400/outlined/add.svg?react';
 import I_drafts from '@material-symbols/svg-400/outlined/drafts.svg?react';
+import I_timeline from '@material-symbols/svg-400/outlined/timeline.svg?react';
+import I_play_arrow from '@material-symbols/svg-400/outlined/play_arrow.svg?react';
+import I_pause from '@material-symbols/svg-400/outlined/pause.svg?react';
+import I_reply from '@material-symbols/svg-400/outlined/reply.svg?react';
+import I_person_add from '@material-symbols/svg-400/outlined/person_add.svg?react';
+import I_person_remove from '@material-symbols/svg-400/outlined/person_remove.svg?react';
+import I_sync_alt from '@material-symbols/svg-400/outlined/sync_alt.svg?react';
 
 const ICONS = {
   'menu': I_menu,
@@ -148,6 +155,13 @@ const ICONS = {
   'more_horiz': I_more_horiz,
   'add': I_add,
   'drafts': I_drafts,
+  'timeline': I_timeline,
+  'play_arrow': I_play_arrow,
+  'pause': I_pause,
+  'reply': I_reply,
+  'person_add': I_person_add,
+  'person_remove': I_person_remove,
+  'sync_alt': I_sync_alt,
 } satisfies Record<string, FC<SVGProps<SVGSVGElement>>>;
 
 export type IconName = keyof typeof ICONS;

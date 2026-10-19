@@ -44,6 +44,7 @@ export function inView(t: Thread, view: View, tabs: boolean): boolean {
     case 'label':
       return t.labels.has(view.label) && !t.junk;
     case 'search':
+    case 'people':
       return false;
   }
 }

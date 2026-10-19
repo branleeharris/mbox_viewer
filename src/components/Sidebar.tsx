@@ -169,6 +169,14 @@ export function Sidebar() {
           />
         ))}
 
+        <NavItem
+          icon="timeline"
+          label="People timeline"
+          // Returning here keeps the people already chosen.
+          view={view.kind === 'people' ? { ...view } : { kind: 'people', a: '', b: '' }}
+          collapsed={collapsed}
+        />
+
         <button
           type="button"
           onClick={() => setMore((m) => !m)}

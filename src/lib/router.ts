@@ -4,7 +4,9 @@ export type View =
   | { kind: 'folder'; folder: FolderId }
   | { kind: 'category'; category: CategoryId }
   | { kind: 'label'; label: string }
-  | { kind: 'search'; query: string };
+  | { kind: 'search'; query: string }
+  /** Conversation timeline between two people (lowercase addresses; "" while not chosen yet). */
+  | { kind: 'people'; a: string; b: string };
 
 export interface Route {
   view: View;
@@ -30,6 +32,9 @@ export function parseHash(hash: string): Route {
     } else if (head === 'search') {
       view = { kind: 'search', query: decodeURIComponent(parts[1] ?? '') };
       rest = parts.slice(2);
+    } else if (head === 'people') {
+      view = { kind: 'people', a: decodeURIComponent(parts[1] ?? '').toLowerCase(), b: decodeURIComponent(parts[2] ?? '').toLowerCase() };
+      rest = parts.slice(3);
     }
   } catch {
     /* malformed escape: fall back to inbox */
@@ -48,6 +53,9 @@ export function viewToHash(view: View): string {
       return '#label/' + encodeURIComponent(view.label);
     case 'search':
       return '#search/' + encodeURIComponent(view.query);
+    case 'people':
+      // "@" is safe in a fragment; leaving it readable keeps the URL recognizable.
+      return '#people/' + [view.a, view.b].map((x) => encodeURIComponent(x).replace(/%40/g, '@')).join('/');
   }
 }
 
@@ -77,5 +85,7 @@ export function viewTitle(view: View): string {
       return view.label;
     case 'search':
       return 'Search results';
+    case 'people':
+      return 'People timeline';
   }
 }

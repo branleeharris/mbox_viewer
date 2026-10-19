@@ -8,6 +8,7 @@ import { downloadEml } from '../lib/export';
 import { Avatar, IconButton, LabelChip, Menu, useDismiss } from './ui';
 import { Icon } from './Icon';
 import { MessageBody } from './MessageBody';
+import { ReplayTimeline } from './ReplayTimeline';
 import { exportThreads } from './MailList';
 
 function RecipientSummary({ m }: { m: MessageMeta }) {
@@ -204,18 +205,22 @@ export function ThreadView({ threadId, split }: { threadId: string; split: boole
   const msgs = useMemo(() => (thread ? thread.messageIds.map((id) => messages.get(id)!).filter(Boolean) : []), [thread, messages]);
   const [expanded, setExpanded] = useState<Set<string>>(() => initialExpanded(msgs));
   const [showCollapsed, setShowCollapsed] = useState(false);
+  const [replay, setReplay] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
   // Reset when switching threads; mark the conversation read when opened.
   useEffect(() => {
     setExpanded(initialExpanded(msgs));
     setShowCollapsed(false);
+    setReplay(false);
     scroller.current?.scrollTo({ top: 0 });
     if (thread?.unread) setThreadsRead([threadId], true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
   useEffect(() => {
+    // The replay timeline handles n / p itself.
+    if (replay) return;
     const onKey = (e: Event) => {
       const dir = (e as CustomEvent<number>).detail;
       // n / p: move expansion to next/previous message.
@@ -228,7 +233,7 @@ export function ThreadView({ threadId, split }: { threadId: string; split: boole
     };
     window.addEventListener('mv:message-nav', onKey);
     return () => window.removeEventListener('mv:message-nav', onKey);
-  }, [msgs, expanded]);
+  }, [msgs, expanded, replay]);
 
   // Thread ids for non-Gmail mail can change when an import adds an earlier message;
   // follow a message we were showing to its new thread instead of dead-ending.
@@ -294,14 +299,28 @@ export function ThreadView({ threadId, split }: { threadId: string; split: boole
           onClick={() => setThreadsStarred([threadId], !thread.starred)}
         />
         <IconButton icon="print" label="Print all" onClick={() => useStore.setState({ printThreadId: threadId, printMessageId: null })} />
-        <IconButton
-          icon={allExpanded ? 'unfold_less' : 'unfold_more'}
-          label={allExpanded ? 'Collapse all' : 'Expand all'}
-          onClick={() => {
-            setShowCollapsed(true);
-            setExpanded(allExpanded ? new Set([msgs[msgs.length - 1].id]) : new Set(msgs.map((m) => m.id)));
-          }}
-        />
+        {!replay && (
+          <IconButton
+            icon={allExpanded ? 'unfold_less' : 'unfold_more'}
+            label={allExpanded ? 'Collapse all' : 'Expand all'}
+            onClick={() => {
+              setShowCollapsed(true);
+              setExpanded(allExpanded ? new Set([msgs[msgs.length - 1].id]) : new Set(msgs.map((m) => m.id)));
+            }}
+          />
+        )}
+        {msgs.length > 1 && (
+          <IconButton
+            icon="timeline"
+            label={replay ? 'Back to conversation' : 'Replay conversation as a timeline'}
+            aria-pressed={replay}
+            className={replay ? 'bg-accent-soft' : ''}
+            onClick={() => {
+              setReplay((r) => !r);
+              scroller.current?.scrollTo({ top: 0 });
+            }}
+          />
+        )}
         {pos >= 0 && (
           <div className="ml-auto flex items-center text-xs text-ink-2">
             <span className="mr-1 hidden whitespace-nowrap sm:inline">
@@ -330,7 +349,9 @@ export function ThreadView({ threadId, split }: { threadId: string; split: boole
           </h1>
         </div>
 
-        {msgs.map((m, i) => {
+        {replay && <ReplayTimeline msgs={msgs} />}
+
+        {!replay && msgs.map((m, i) => {
           if (hideRange && i >= collapseFrom && i <= collapseTo) {
             if (i !== collapseFrom) return null;
             return (
