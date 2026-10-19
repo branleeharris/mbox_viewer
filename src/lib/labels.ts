@@ -3,6 +3,8 @@
  * `X-Gmail-Labels` header, e.g. `Inbox,Important,Opened,Category Updates,Work/Clients`.
  */
 
+import type { MessageMeta } from './types';
+
 /** System folders, in sidebar order. `id` is used in URLs. */
 export const SYSTEM_FOLDERS = [
   { id: 'inbox', label: 'Inbox', icon: 'inbox' },
@@ -142,4 +144,17 @@ export function labelColor(label: string): { bg: string; fg: string } {
 export function labelLeaf(label: string): string {
   const i = label.lastIndexOf('/');
   return i >= 0 ? label.slice(i + 1) : label;
+}
+
+/**
+ * Labels used for folder views. Messages with no folder info in the archive
+ * (Google Vault exports, most non-Gmail clients) are filed by sender: mail from
+ * the mailbox owner goes to Sent, everything else to Inbox. Messages imported
+ * before the `folderless` flag existed are recognized by having only the
+ * synthesized Inbox label and no Gmail thread id (Takeout always has one).
+ */
+export function effectiveLabels(m: Pick<MessageMeta, 'labels' | 'folderless' | 'gmThreadId' | 'from'>, me: string[]): string[] {
+  const folderless = m.folderless ?? (!m.gmThreadId && m.labels.length === 1 && m.labels[0] === L.inbox);
+  if (!folderless) return m.labels;
+  return me.includes(m.from.address) ? [L.sent] : [L.inbox];
 }

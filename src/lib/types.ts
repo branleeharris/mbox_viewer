@@ -39,6 +39,8 @@ export interface MessageMeta {
   snippet: string;
   /** Labels as written in the archive (Gmail X-Gmail-Labels), or synthesized. */
   labels: string[];
+  /** The archive had no folder/label info for this message (e.g. Google Vault exports). */
+  folderless?: boolean;
   attachments: AttachmentMeta[];
   unread: boolean;
   starred: boolean;
@@ -56,6 +58,9 @@ export interface MessageFlags {
 export interface Source {
   id: string;
   name: string;
+  /** Archive (zip/tgz) the mbox was extracted from, if any. */
+  archive?: string;
+  /** Size of the mbox data in bytes (uncompressed). */
   size: number;
   importedAt: number;
   messageCount: number;

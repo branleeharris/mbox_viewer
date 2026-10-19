@@ -155,3 +155,13 @@ describe('splitLabelHeader', () => {
     expect(splitLabelHeader('Inbox,"Projects, 2024",Work/Clients')).toEqual(['Inbox', 'Projects, 2024', 'Work/Clients']);
   });
 });
+
+describe('snippets from HTML-in-plain-text', () => {
+  it('strips markup some senders put in text/plain', async () => {
+    const raw = new TextEncoder().encode(
+      'From x@y Mon Jan  1 00:00:00 2024\nFrom: a@b.c\nSubject: t\nContent-Type: text/plain\n\n<table><tr><td width="600px" style="font-family:Arial">Latest: 1 Playlist</td></tr></table>Line<br />two\n',
+    );
+    const { meta } = await extractMessage(raw);
+    expect(meta.snippet).toBe('Latest: 1 Playlist Line two');
+  });
+});

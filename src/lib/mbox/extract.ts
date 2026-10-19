@@ -92,8 +92,10 @@ export async function extractMessage(bytes: Uint8Array): Promise<Extracted> {
   const starred = labels.has(L.starred) || /F/.test(header(email, 'x-status') ?? '');
   const important = labels.has(L.important);
   for (const transient of [L.unread, L.opened, L.archived, L.starred, L.important]) labels.delete(transient);
-  // Plain mbox exports without any folder info land in the inbox.
-  if (!gmLabels && labels.size === 0) labels.add(L.inbox);
+  // Exports without any folder info (Vault, most non-Gmail clients): the app files
+  // these by sender once it knows the owner's address (see effectiveLabels).
+  const folderless = !gmLabels && labels.size === 0;
+  if (folderless) labels.add(L.inbox);
 
   const attachments: AttachmentMeta[] = [];
   for (const a of email.attachments) {
@@ -102,7 +104,10 @@ export async function extractMessage(bytes: Uint8Array): Promise<Extracted> {
     attachments.push({ name: a.filename || unnamed(a.mimeType), type: a.mimeType, size });
   }
 
-  const text = email.text?.trim() ? email.text : email.html ? htmlToText(email.html) : '';
+  // Some senders put raw HTML in the text/plain part; treat that as HTML.
+  const plain = email.text?.trim() ? email.text : '';
+  const plainIsHtml = !!plain && /<(br|p|div|tr|td|table|span|font|a)\b[^>]*>/i.test(plain);
+  const text = plain && !plainIsHtml ? plain : email.html ? htmlToText(email.html) : plainIsHtml ? htmlToText(plain) : '';
   const from = flattenAddresses(email.from)[0] ?? { name: '', address: '' };
   const to = flattenAddresses(email.to);
   const cc = flattenAddresses(email.cc);
@@ -141,6 +146,7 @@ export async function extractMessage(bytes: Uint8Array): Promise<Extracted> {
       date,
       snippet: makeSnippet(text),
       labels: [...labels],
+      ...(folderless ? { folderless: true } : {}),
       attachments,
       unread,
       starred,

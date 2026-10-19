@@ -1,20 +1,26 @@
 /**
- * Import worker: streams mbox files in chunks, splits them at the byte level,
- * parses each message, and writes metadata + search text to IndexedDB. The raw
- * file is copied into the origin-private file system (OPFS) in the same pass so
- * messages can be re-opened after a page reload.
+ * Import worker: streams mbox data (plain files, or mbox files inside zip/tgz
+ * archives) in chunks, splits it at the byte level, parses each message, and
+ * writes metadata + search text to IndexedDB. The mbox bytes are copied into the
+ * origin-private file system (OPFS) in the same pass so messages can be re-opened
+ * after a page reload. While an extracted copy is still being written, the main
+ * thread reads messages from it through 'read' requests.
  */
 import { getDB } from '../db';
 import type { MessageMeta, SearchChunk, Source } from '../types';
 import { extractMessage } from './extract';
 import { MboxSplitter, type RawMessage } from './splitter';
+import { planFile, openPlan, type MailStream, type Plan, type Progress } from './archive';
 
 export type ImportRequest =
   | { type: 'import'; files: File[]; existingKeys: string[] }
+  | { type: 'read'; id: number; sourceId: string; offset: number; length: number }
   | { type: 'cancel' };
 
 export type ImportEvent =
-  | { type: 'source'; source: Source; file: File }
+  /** `file` is set when the mbox bytes are readable from a Blob this session (plain files, or in-memory fallback). */
+  | { type: 'source'; source: Source; file?: Blob }
+  | { type: 'read-result'; id: number; bytes?: Uint8Array; error?: string }
   | {
       type: 'progress';
       fileName: string;
@@ -31,7 +37,6 @@ export type ImportEvent =
   | { type: 'error'; message: string };
 
 const BATCH_SIZE = 400;
-const READ_CHUNK = 8 * 1024 * 1024;
 
 // Typed minimally: the DOM and WebWorker libs conflict in a single tsconfig.
 const ctx = self as unknown as {
@@ -51,6 +56,17 @@ ctx.onmessage = (e) => {
     cancelled = true;
     return;
   }
+  if (msg.type === 'read') {
+    const w = activeWriters.get(msg.sourceId);
+    if (!w) {
+      post({ type: 'read-result', id: msg.id, error: 'not importing' });
+      return;
+    }
+    const bytes = new Uint8Array(msg.length);
+    const n = w.read(bytes, msg.offset);
+    ctx.postMessage({ type: 'read-result', id: msg.id, bytes: bytes.subarray(0, n) } satisfies ImportEvent);
+    return;
+  }
   if (msg.type === 'import') {
     cancelled = false;
     runImport(msg.files, new Set(msg.existingKeys)).catch((err: unknown) => {
@@ -67,15 +83,19 @@ function shortId(): string {
 
 interface OpfsWriter {
   write(chunk: Uint8Array, at: number): void;
+  read(into: Uint8Array, at: number): number;
   close(): void;
 }
+
+/** Writers for sources currently being imported, so the UI can read from them. */
+const activeWriters = new Map<string, OpfsWriter>();
 
 async function openOpfsWriter(name: string, size: number): Promise<OpfsWriter | string> {
   try {
     if (!navigator.storage?.getDirectory) return 'This browser has no private file storage.';
     const est = await navigator.storage.estimate();
     const free = (est.quota ?? 0) - (est.usage ?? 0);
-    if (free < size * 1.1) {
+    if (size && free < size * 1.1) {
       return `Not enough browser storage to keep a copy (${Math.round(free / 1e6)} MB free).`;
     }
     const root = await navigator.storage.getDirectory();
@@ -83,6 +103,7 @@ async function openOpfsWriter(name: string, size: number): Promise<OpfsWriter | 
     const access = await (fh as FileSystemFileHandle & {
       createSyncAccessHandle(): Promise<{
         write(b: Uint8Array, o: { at: number }): number;
+        read(b: Uint8Array, o: { at: number }): number;
         truncate(n: number): void;
         flush(): void;
         close(): void;
@@ -92,6 +113,9 @@ async function openOpfsWriter(name: string, size: number): Promise<OpfsWriter | 
     return {
       write(chunk, at) {
         access.write(chunk, { at });
+      },
+      read(into, at) {
+        return access.read(into, { at });
       },
       close() {
         access.flush();
@@ -103,17 +127,6 @@ async function openOpfsWriter(name: string, size: number): Promise<OpfsWriter | 
   }
 }
 
-/** Cheap sniff so a stray PDF or the Takeout .zip itself isn't imported as a "message". */
-async function checkLooksLikeMail(file: File): Promise<string | null> {
-  const head = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
-  if (head[0] === 0x50 && head[1] === 0x4b) {
-    return `"${file.name}" is a zip archive. Unzip it first, then open the .mbox file inside (Takeout/Mail/…).`;
-  }
-  const text = new TextDecoder('latin1').decode(head).replace(/^\uFEFF|^\xEF\xBB\xBF/, '').replace(/^[\r\n]+/, '');
-  if (text.startsWith('From ') || /^[!-9;-~]+:[^\r\n]*\r?\n/.test(text)) return null;
-  return `"${file.name}" doesn't look like an mbox or .eml file, so it was skipped.`;
-}
-
 async function runImport(files: File[], existingKeys: Set<string>) {
   const db = await getDB();
   try {
@@ -121,124 +134,162 @@ async function runImport(files: File[], existingKeys: Set<string>) {
   } catch {
     /* best effort */
   }
+  const warn = (message: string) => post({ type: 'warning', message });
 
-  for (let fi = 0; fi < files.length && !cancelled; fi++) {
-    const file = files[fi];
-    const rejection = await checkLooksLikeMail(file);
-    if (rejection) {
-      post({ type: 'warning', message: rejection });
-      continue;
-    }
-    const sourceId = shortId();
-    const opfsName = `${sourceId}.mbox`;
-    const writerOrReason = await openOpfsWriter(opfsName, file.size);
-    const writer = typeof writerOrReason === 'string' ? null : writerOrReason;
-    if (!writer) {
-      post({
-        type: 'warning',
-        message: `"${file.name}" will be available until you close this tab, but won't be saved in the browser. ${writerOrReason}`,
-      });
-    }
+  // Plan every file first (cheap: zips are indexed from their central directory)
+  // so progress can be reported against the real total.
+  const plans: Plan[] = [];
+  for (const file of files) {
+    const plan = await planFile(file);
+    if (typeof plan === 'string') warn(plan);
+    else plans.push(plan);
+  }
+  const totalBytes = plans.reduce((n, p) => n + p.total, 0);
+  const progress: Progress = { read: 0 };
 
-    const source: Source = {
-      id: sourceId,
-      name: file.name,
-      size: file.size,
-      importedAt: Date.now(),
-      messageCount: 0,
-      duplicateCount: 0,
-      persisted: !!writer,
-      opfsName: writer ? opfsName : undefined,
-      complete: false,
+  for (let pi = 0; pi < plans.length && !cancelled; pi++) {
+    try {
+      for await (const stream of openPlan(plans[pi], progress, warn)) {
+        if (cancelled) break;
+        await importStream(stream, {
+          db,
+          existingKeys,
+          report: (name, messages, duplicates) =>
+            post({
+              type: 'progress',
+              fileName: name,
+              fileIndex: pi,
+              fileCount: plans.length,
+              bytesRead: progress.read,
+              totalBytes,
+              messages,
+              duplicates,
+            }),
+        });
+      }
+    } catch (err) {
+      warn(`"${plans[pi].file.name}" couldn't be fully read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  post({ type: 'done', cancelled });
+}
+
+interface StreamContext {
+  db: Awaited<ReturnType<typeof getDB>>;
+  existingKeys: Set<string>;
+  report: (name: string, messages: number, duplicates: number) => void;
+}
+
+async function importStream(stream: MailStream, { db, existingKeys, report }: StreamContext) {
+  const sourceId = shortId();
+  const opfsName = `${sourceId}.mbox`;
+  const writerOrReason = await openOpfsWriter(opfsName, stream.sizeHint);
+  const writer = typeof writerOrReason === 'string' ? null : writerOrReason;
+  // Without OPFS, extracted data is kept as Blob pieces (the browser may page them to disk).
+  const memoryParts: Blob[] | null = !writer && !stream.file ? [] : null;
+  if (!writer) {
+    post({
+      type: 'warning',
+      message: `"${stream.name}" will be available until you close this tab, but won't be saved in the browser. ${writerOrReason}`,
+    });
+  }
+
+  const source: Source = {
+    id: sourceId,
+    name: stream.name,
+    archive: stream.archive,
+    size: stream.sizeHint,
+    importedAt: Date.now(),
+    messageCount: 0,
+    duplicateCount: 0,
+    persisted: !!writer,
+    opfsName: writer ? opfsName : undefined,
+    complete: false,
+  };
+  await db.put('sources', source);
+  if (writer) activeWriters.set(sourceId, writer);
+  post({ type: 'source', source, file: stream.file });
+
+  const splitter = new MboxSplitter();
+  let index = 0;
+  let chunkNo = 0;
+  let batch: MessageMeta[] = [];
+  let texts: string[] = [];
+  let lastProgress = 0;
+
+  const flush = async () => {
+    if (!batch.length) return;
+    const chunk: SearchChunk = {
+      id: `${sourceId}:${chunkNo++}`,
+      sourceId,
+      ids: batch.map((m) => m.id),
+      texts,
     };
-    await db.put('sources', source);
-    post({ type: 'source', source, file });
+    const tx = db.transaction(['messages', 'chunks'], 'readwrite');
+    for (const m of batch) void tx.objectStore('messages').put(m);
+    void tx.objectStore('chunks').put(chunk);
+    await tx.done;
+    post({ type: 'batch', messages: batch });
+    batch = [];
+    texts = [];
+  };
 
-    const splitter = new MboxSplitter();
-    let index = 0;
-    let chunkNo = 0;
-    let batch: MessageMeta[] = [];
-    let texts: string[] = [];
-    let bytesRead = 0;
-    let lastProgress = 0;
-
-    const flush = async () => {
-      if (!batch.length) return;
-      const chunk: SearchChunk = {
-        id: `${sourceId}:${chunkNo++}`,
-        sourceId,
-        ids: batch.map((m) => m.id),
-        texts,
+  const handle = async (raw: RawMessage) => {
+    let extracted;
+    try {
+      extracted = await extractMessage(raw.bytes);
+    } catch (err) {
+      // Keep unparseable messages visible rather than silently dropping them.
+      extracted = {
+        meta: {
+          headerOffset: 0,
+          length: raw.bytes.length,
+          messageId: '',
+          dedupeKey: `broken|${sourceId}|${raw.offset}`,
+          references: [],
+          from: { name: 'Unreadable message', address: '' },
+          to: [],
+          cc: [],
+          bcc: [],
+          replyTo: [],
+          subject: `(could not parse message at byte ${raw.offset})`,
+          date: 0,
+          snippet: err instanceof Error ? err.message : String(err),
+          labels: ['\\Inbox'],
+          attachments: [],
+          unread: false,
+          starred: false,
+          important: false,
+        },
+        searchText: '',
       };
-      const tx = db.transaction(['messages', 'chunks'], 'readwrite');
-      for (const m of batch) void tx.objectStore('messages').put(m);
-      void tx.objectStore('chunks').put(chunk);
-      await tx.done;
-      post({ type: 'batch', messages: batch });
-      batch = [];
-      texts = [];
-    };
+    }
+    if (existingKeys.has(extracted.meta.dedupeKey)) {
+      source.duplicateCount++;
+      return;
+    }
+    existingKeys.add(extracted.meta.dedupeKey);
+    batch.push({ ...extracted.meta, id: `${sourceId}:${index++}`, sourceId, offset: raw.offset });
+    texts.push(extracted.searchText);
+    if (batch.length >= BATCH_SIZE) await flush();
+  };
 
-    const handle = async (raw: RawMessage) => {
-      let extracted;
-      try {
-        extracted = await extractMessage(raw.bytes);
-      } catch (err) {
-        // Keep unparseable messages visible rather than silently dropping them.
-        extracted = {
-          meta: {
-            headerOffset: 0,
-            length: raw.bytes.length,
-            messageId: '',
-            dedupeKey: `broken|${sourceId}|${raw.offset}`,
-            references: [],
-            from: { name: 'Unreadable message', address: '' },
-            to: [],
-            cc: [],
-            bcc: [],
-            replyTo: [],
-            subject: `(could not parse message at byte ${raw.offset})`,
-            date: 0,
-            snippet: err instanceof Error ? err.message : String(err),
-            labels: ['\\Inbox'],
-            attachments: [],
-            unread: false,
-            starred: false,
-            important: false,
-          },
-          searchText: '',
-        };
-      }
-      if (existingKeys.has(extracted.meta.dedupeKey)) {
-        source.duplicateCount++;
-        return;
-      }
-      existingKeys.add(extracted.meta.dedupeKey);
-      batch.push({ ...extracted.meta, id: `${sourceId}:${index++}`, sourceId, offset: raw.offset });
-      texts.push(extracted.searchText);
-      if (batch.length >= BATCH_SIZE) await flush();
-    };
+  const reportProgress = (force = false) => {
+    const now = performance.now();
+    if (!force && now - lastProgress < 150) return;
+    lastProgress = now;
+    report(stream.name, index, source.duplicateCount);
+  };
 
-    const reportProgress = (force = false) => {
-      const now = performance.now();
-      if (!force && now - lastProgress < 150) return;
-      lastProgress = now;
-      post({
-        type: 'progress',
-        fileName: file.name,
-        fileIndex: fi,
-        fileCount: files.length,
-        bytesRead,
-        totalBytes: file.size,
-        messages: index,
-        duplicates: source.duplicateCount,
-      });
-    };
-
-    for (let pos = 0; pos < file.size && !cancelled; pos += READ_CHUNK) {
-      const chunk = new Uint8Array(await file.slice(pos, pos + READ_CHUNK).arrayBuffer());
+  let pos = 0;
+  try {
+    for await (const chunk of stream.chunks) {
+      if (cancelled) break;
+      // Write before parsing, so any message the UI lists is already readable.
       writer?.write(chunk, pos);
-      bytesRead = pos + chunk.length;
+      memoryParts?.push(new Blob([chunk as BlobPart]));
+      pos += chunk.length;
       for (const raw of splitter.push(chunk)) {
         await handle(raw);
         if (cancelled) break;
@@ -247,14 +298,15 @@ async function runImport(files: File[], existingKeys: Set<string>) {
     }
     if (!cancelled) for (const raw of splitter.end()) await handle(raw);
     await flush();
+  } finally {
+    activeWriters.delete(sourceId);
     writer?.close();
-
-    source.messageCount = index;
-    source.complete = !cancelled;
-    await db.put('sources', source);
-    post({ type: 'source', source, file });
-    reportProgress(true);
   }
 
-  post({ type: 'done', cancelled });
+  source.size = pos;
+  source.messageCount = index;
+  source.complete = !cancelled;
+  await db.put('sources', source);
+  post({ type: 'source', source, file: stream.file ?? (memoryParts ? new Blob(memoryParts) : undefined) });
+  reportProgress(true);
 }

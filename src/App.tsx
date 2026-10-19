@@ -10,7 +10,7 @@ import { ThreadView } from './components/ThreadView';
 import { Welcome } from './components/Welcome';
 import { ImportStatus, Toast, DropOverlay } from './components/StatusLayer';
 import { SettingsPanel } from './components/SettingsPanel';
-import { ShortcutsDialog, OriginalMessage, PrintView } from './components/Overlays';
+import { ShortcutsDialog, OriginalMessage, PrintView, UnloadDialog } from './components/Overlays';
 import { Icon } from './components/Icon';
 
 function useTheme() {
@@ -168,6 +168,7 @@ export default function App() {
       <ShortcutsDialog />
       <OriginalMessage />
       <PrintView />
+      <UnloadDialog />
     </>
   );
 }

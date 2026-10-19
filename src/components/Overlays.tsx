@@ -33,6 +33,59 @@ export function ShortcutsDialog() {
   );
 }
 
+export function UnloadDialog() {
+  const open = useStore((s) => s.unloadOpen);
+  const sources = useStore((s) => s.sources);
+  const count = useStore((s) => s.messages.size);
+  const importing = useStore((s) => !!s.importing);
+  const [busy, setBusy] = useState(false);
+  if (!open) return null;
+  const names = [...sources.values()].map((x) => x.name);
+  const close = () => !busy && useStore.setState({ unloadOpen: false });
+  return (
+    <Dialog title="Unload mailbox?" onClose={close}>
+      <p className="mb-3 text-sm text-ink-2">
+        This removes {count.toLocaleString()} message{count === 1 ? '' : 's'}
+        {names.length ? (
+          <>
+            {' '}from <b className="text-ink">{names.length === 1 ? names[0] : `${names.length} files`}</b>
+          </>
+        ) : null}{' '}
+        from this browser{importing ? ' and stops the import in progress' : ''}. Your original files aren't changed, and your display settings are kept.
+      </p>
+      {names.length > 1 && (
+        <ul className="mb-3 max-h-32 list-disc overflow-auto pl-5 text-xs text-ink-3">
+          {names.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <button type="button" onClick={close} className="rounded-full px-4 py-2 text-sm font-medium text-accent hover:bg-hover">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          autoFocus
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await useStore.getState().clearAll(true);
+              useStore.getState().showToast('Mailbox unloaded');
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="flex items-center gap-2 rounded-full bg-danger px-5 py-2 text-sm font-medium text-surface hover:shadow disabled:opacity-60"
+        >
+          <Icon name="eject" size={18} /> {busy ? 'Unloading…' : 'Unload'}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 const utf8 = new TextDecoder('utf-8');
 const SHOW_LIMIT = 2 * 1024 * 1024;
 

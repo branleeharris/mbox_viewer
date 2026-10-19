@@ -69,6 +69,7 @@ import I_desktop_windows from '@material-symbols/svg-400/outlined/desktop_window
 import I_keyboard from '@material-symbols/svg-400/outlined/keyboard.svg?react';
 import I_delete_forever from '@material-symbols/svg-400/outlined/delete_forever.svg?react';
 import I_more_horiz from '@material-symbols/svg-400/outlined/more_horiz.svg?react';
+import I_eject from '@material-symbols/svg-400/outlined/eject.svg?react';
 import I_lock from '@material-symbols/svg-400/outlined/lock.svg?react';
 import I_add from '@material-symbols/svg-400/outlined/add.svg?react';
 import I_drafts from '@material-symbols/svg-400/outlined/drafts.svg?react';
@@ -143,6 +144,7 @@ const ICONS = {
   'keyboard': I_keyboard,
   'delete_forever': I_delete_forever,
   'lock': I_lock,
+  'eject': I_eject,
   'more_horiz': I_more_horiz,
   'add': I_add,
   'drafts': I_drafts,

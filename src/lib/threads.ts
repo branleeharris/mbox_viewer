@@ -1,5 +1,5 @@
 import type { MessageMeta, Thread } from './types';
-import { L } from './labels';
+import { L, effectiveLabels } from './labels';
 
 /**
  * Group messages into conversations.
@@ -10,7 +10,7 @@ import { L } from './labels';
  * Subject-only grouping is deliberately not used: it merges unrelated mail that
  * happens to share a subject like "Meeting".
  */
-export function buildThreads(messages: Iterable<MessageMeta>): Map<string, Thread> {
+export function buildThreads(messages: Iterable<MessageMeta>, me: string[] = []): Map<string, Thread> {
   const list = [...messages];
   const parent = new Map<string, string>();
   const find = (x: string): string => {
@@ -61,12 +61,12 @@ export function buildThreads(messages: Iterable<MessageMeta>): Map<string, Threa
     msgs.sort((a, b) => a.date - b.date || a.offset - b.offset);
     const gm = msgs.find((m) => m.gmThreadId)?.gmThreadId;
     const id = gm ? 'g' + gm : 't' + msgs[0].id.replace(/[^a-z0-9]/gi, '');
-    threads.set(id, summarize(id, msgs));
+    threads.set(id, summarize(id, msgs, me));
   }
   return threads;
 }
 
-export function summarize(id: string, msgs: MessageMeta[]): Thread {
+export function summarize(id: string, msgs: MessageMeta[], me: string[] = []): Thread {
   const labels = new Set<string>();
   let unread = false;
   let starred = false;
@@ -74,12 +74,13 @@ export function summarize(id: string, msgs: MessageMeta[]): Thread {
   let hasAttachments = false;
   let junk = true;
   for (const m of msgs) {
-    for (const l of m.labels) labels.add(l);
+    const ml = effectiveLabels(m, me);
+    for (const l of ml) labels.add(l);
     unread ||= m.unread;
     starred ||= m.starred;
     important ||= m.important;
     hasAttachments ||= m.attachments.length > 0;
-    junk &&= m.labels.includes(L.spam) || m.labels.includes(L.trash);
+    junk &&= ml.includes(L.spam) || ml.includes(L.trash);
   }
   const first = msgs.find((m) => m.subject) ?? msgs[0];
   return {

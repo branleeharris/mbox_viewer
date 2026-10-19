@@ -45,7 +45,7 @@ export function useShortcuts() {
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || typing(e)) return;
-      if (s.settingsOpen || s.originalMessageId || (s.shortcutsOpen && e.key !== 'Escape' && e.key !== '?')) return;
+      if (s.settingsOpen || s.originalMessageId || s.unloadOpen || (s.shortcutsOpen && e.key !== 'Escape' && e.key !== '?')) return;
 
       const { route, list, page, settings } = s;
       const size = settings.pageSize;

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { SearchBar } from './SearchBar';
 import { IconButton, Menu } from './ui';
+import { Icon } from './Icon';
 import { formatBytes } from '../lib/format';
 
 export function Logo() {
@@ -65,7 +66,17 @@ export function TopBar() {
       <div className="flex min-w-0 flex-1 pl-2 lg:pl-6">
         <SearchBar />
       </div>
-      <div className="flex shrink-0 items-center pl-2">
+      <div className="flex shrink-0 items-center gap-1 pl-2">
+        <button
+          type="button"
+          onClick={() => useStore.setState({ unloadOpen: true })}
+          title="Unload mailbox"
+          aria-label="Unload mailbox"
+          className="mr-1 flex h-10 items-center gap-2 rounded-full border border-line-strong px-3 text-sm font-medium text-ink-2 hover:bg-hover active:bg-press sm:px-4"
+        >
+          <Icon name="eject" size={20} />
+          <span className="hidden md:inline">Unload mailbox</span>
+        </button>
         <span className="hidden md:inline-flex">
           <IconButton icon="help" label="Keyboard shortcuts" size={24} onClick={() => useStore.setState({ shortcutsOpen: true })} />
         </span>

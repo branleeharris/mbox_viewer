@@ -22,9 +22,9 @@ export function Welcome() {
             <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-compose text-compose-ink">
               <Icon name="upload_file" size={32} />
             </span>
-            <span className="text-lg font-medium text-ink">Drop .mbox files here</span>
+            <span className="text-lg font-medium text-ink">Drop .mbox files or export archives here</span>
             <span className="text-sm text-ink-2">
-              or <span className="font-medium text-accent group-hover:underline">choose files</span>. You can pick several to merge them into one mailbox.
+              or <span className="font-medium text-accent group-hover:underline">choose files</span>. Google Takeout and Vault .zip or .tgz files work as they are, with no need to unzip. Pick several to merge them into one mailbox.
             </span>
           </button>
 
@@ -53,12 +53,13 @@ export function Welcome() {
               <li>
                 Select <b>Mail</b> (optionally limit it to certain labels), then <b>Next step</b> → <b>Create export</b>.
               </li>
-              <li>Download and unzip the archive when Google emails you.</li>
+              <li>Download the archive when Google emails you.</li>
               <li>
-                Open <code className="rounded bg-chip px-1">Takeout/Mail/All mail Including Spam and Trash.mbox</code> here.
+                Open the downloaded <b>.zip</b> here as is. The app finds{' '}
+                <code className="rounded bg-chip px-1">Takeout/Mail/All mail Including Spam and Trash.mbox</code> inside it.
               </li>
             </ol>
-            <p className="mt-3">Exports from Thunderbird, Apple Mail and other clients work too, as do single .eml files.</p>
+            <p className="mt-3">Google Vault exports, Thunderbird, Apple Mail and other clients work too, as do single .eml files. Mail without folder information is filed by sender: yours goes to Sent, everything else to Inbox.</p>
           </details>
         </div>
       </main>

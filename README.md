@@ -1,6 +1,6 @@
 # Mbox Viewer
 
-A private, in-browser viewer for `.mbox` email archives that works like Gmail. Built for Google Takeout exports (including multi-GB ones), and it also reads mbox files from Thunderbird, Apple Mail and others, plus single `.eml` files.
+A private, in-browser viewer for `.mbox` email archives that works like Gmail. Built for Google Takeout and Google Vault exports (including multi-GB ones), and it also reads mbox files from Thunderbird, Apple Mail and others, plus single `.eml` files. Takeout and Vault `.zip`/`.tgz` archives can be opened as they are, with no need to unzip.
 
 Nothing is uploaded. Files are parsed in your browser and stored only in this browser's private storage until you clear them.
 
@@ -8,6 +8,8 @@ Nothing is uploaded. Files are parsed in your browser and stored only in this br
 
 - **Gmail layout**: labels sidebar with unread counts, Primary/Promotions/Social/Updates/Forums tabs, conversation list with stars, importance markers, label chips and attachment chips, and paging ("1–50 of 12,345").
 - **Real Gmail data**: Takeout's `X-Gmail-Labels` and `X-GM-THRID` headers become folders, nested labels, categories, stars, read state and the original conversations. Other mbox files are threaded by `References`/`In-Reply-To`.
+- **Exports without folders** (Google Vault, most other clients): mail from the account owner goes to Sent, everything else to Inbox. The owner is read from the Vault file name, or detected from `Delivered-To`, and can be edited in Settings.
+- **Archives**: `.zip` (including Zip64 over 4 GB), `.tgz`/`.tar.gz`, `.tar` and `.mbox.gz` are read in a streaming pass, and every `.mbox` inside is imported.
 - **Conversation view**: older messages collapse, quoted history hides behind `•••`, a recipient details popover, attachments with image previews, Show original (with SPF/DKIM/DMARC), and `.eml` download.
 - **Search**: Gmail operators (`from:`, `to:`, `subject:`, `label:`, `in:`, `is:unread`, `has:attachment`, `filename:`, `before:`/`after:`, `older_than:`, `larger:`, `-term`, `OR`, `"phrases"`), an advanced search panel, quick filter chips, and full-text body search in a background worker.
 - **Keyboard shortcuts**: `j`/`k`, `o`, `u`, `x`, `s`, `/`, `g i`, `*a`, `Shift+I`/`Shift+U` and more. Press `?` in the app for the full list.
@@ -20,7 +22,7 @@ Nothing is uploaded. Files are parsed in your browser and stored only in this br
 - Email HTML is sanitized with DOMPurify and rendered in a sandboxed iframe that cannot run scripts.
 - Remote images and CSS backgrounds are blocked until you choose to display them (per message, per sender, or always), so opening an old message doesn't tell a tracker you read it.
 - Production builds ship a strict Content-Security-Policy. `vercel.json` adds frame and referrer protections.
-- Raw files are kept in the browser's origin-private file system (OPFS) and the index in IndexedDB. **Settings → Clear all data** removes both.
+- Raw files are kept in the browser's origin-private file system (OPFS) and the index in IndexedDB. **Unload mailbox** in the top bar removes the loaded mail; **Settings → Clear all data** also resets settings.
 
 ## Development
 
@@ -39,6 +41,7 @@ npm run sample     # writes sample.mbox (Takeout-style test data); `npm run samp
 | Piece | File |
 |---|---|
 | Streaming byte-level mbox splitter (no charset guessing, handles `>From` escaping and CRLF) | `src/lib/mbox/splitter.ts` |
+| Archive reader: zip/Zip64 central directory, streaming deflate/gzip, tar | `src/lib/mbox/archive.ts` |
 | Import worker: reads 8 MB chunks, parses with postal-mime, writes IndexedDB and OPFS | `src/lib/mbox/import.worker.ts`, `extract.ts` |
 | Threading (Gmail thread IDs, then message references) | `src/lib/threads.ts` |
 | Search syntax and full-text worker | `src/lib/search/` |

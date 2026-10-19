@@ -4,7 +4,7 @@
  * plus "quoted phrases", -negation, OR, parentheses and {a b} groups.
  */
 import type { MessageMeta } from '../types';
-import { L, categoryLabel, isSystemLabel, type CategoryId } from '../labels';
+import { L, categoryLabel, effectiveLabels, isSystemLabel, type CategoryId } from '../labels';
 
 export type Node =
   | { type: 'and'; children: Node[] }
@@ -240,15 +240,15 @@ function matchTerm(field: string | null, value: string, m: MessageMeta, ctx: Eva
     }
     case 'category':
       return m.labels.includes(categoryLabel(v as CategoryId)) ||
-        (v === 'primary' && m.labels.includes(L.inbox) && !m.labels.some((l) => l.startsWith('\\Category ') && l !== categoryLabel('primary')));
+        (v === 'primary' && effectiveLabels(m, ctx.me).includes(L.inbox) && !m.labels.some((l) => l.startsWith('\\Category ') && l !== categoryLabel('primary')));
     case 'in':
-      return inFolder(v, m);
+      return inFolder(v, m, ctx.me);
     case 'is':
       if (v === 'unread') return m.unread;
       if (v === 'read') return !m.unread;
       if (v === 'starred') return m.starred;
       if (v === 'important') return m.important;
-      return inFolder(v, m);
+      return inFolder(v, m, ctx.me);
     case 'has':
       if (v === 'attachment') return m.attachments.length > 0;
       if (v === 'userlabels') return m.labels.some((l) => !isSystemLabel(l));
@@ -290,24 +290,25 @@ function matchTerm(field: string | null, value: string, m: MessageMeta, ctx: Eva
   }
 }
 
-function inFolder(v: string, m: MessageMeta): boolean {
+function inFolder(v: string, m: MessageMeta, me: string[]): boolean {
+  const labels = effectiveLabels(m, me);
   switch (v) {
     case 'anywhere':
       return true;
     case 'inbox':
-      return m.labels.includes(L.inbox);
+      return labels.includes(L.inbox);
     case 'sent':
-      return m.labels.includes(L.sent);
+      return labels.includes(L.sent);
     case 'draft':
     case 'drafts':
-      return m.labels.includes(L.drafts);
+      return labels.includes(L.drafts);
     case 'spam':
-      return m.labels.includes(L.spam);
+      return labels.includes(L.spam);
     case 'trash':
-      return m.labels.includes(L.trash);
+      return labels.includes(L.trash);
     case 'chats':
     case 'chat':
-      return m.labels.includes(L.chats);
+      return labels.includes(L.chats);
     case 'starred':
       return m.starred;
     case 'important':
@@ -315,7 +316,7 @@ function inFolder(v: string, m: MessageMeta): boolean {
     case 'unread':
       return m.unread;
     default:
-      return m.labels.some((l) => norm(l) === norm(v));
+      return labels.some((l) => norm(l) === norm(v));
   }
 }
 

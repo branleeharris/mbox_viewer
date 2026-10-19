@@ -5,7 +5,7 @@ import * as db from './lib/db';
 import { buildThreads, summarize } from './lib/threads';
 import { computeCounts, type SidebarCounts } from './lib/views';
 import { parseHash, type Route } from './lib/router';
-import { registerSessionFile, forgetSource } from './lib/raw';
+import { registerSessionFile, forgetSource, refreshSource, setImportReader } from './lib/raw';
 import { invalidateSearch } from './lib/search/client';
 import { L } from './lib/labels';
 import type { ImportEvent, ImportRequest } from './lib/mbox/import.worker';
@@ -63,7 +63,9 @@ interface State {
   importFiles(files: File[]): void;
   cancelImport(): void;
   removeSource(id: string): Promise<void>;
-  clearAll(): Promise<void>;
+  /** Remove all mail. With keepPreferences, display settings survive ("Unload mailbox"). */
+  clearAll(keepPreferences?: boolean): Promise<void>;
+  unloadOpen: boolean;
   updateSettings(patch: Partial<Settings>): void;
   setFlags(messageIds: string[], patch: Omit<MessageFlags, 'id'>): void;
   setThreadsRead(threadIds: string[], read: boolean): void;
@@ -93,6 +95,7 @@ async function stopWorker() {
     w.postMessage({ type: 'cancel' } satisfies ImportRequest);
   });
   w.terminate();
+  setImportReader(null);
   if (worker === w) worker = null;
   workerDone = null;
 }
@@ -108,12 +111,22 @@ function applyFlags(m: MessageMeta, f: MessageFlags | undefined): MessageMeta {
   };
 }
 
-function rebuild(messages: Map<string, MessageMeta>) {
-  const threads = buildThreads(messages.values());
+function rebuild(messages: Map<string, MessageMeta>, me: string[]) {
+  const threads = buildThreads(messages.values(), me);
   const msgToThread = new Map<string, string>();
   for (const t of threads.values()) for (const id of t.messageIds) msgToThread.set(id, t.id);
   const sortedThreads = [...threads.values()].sort((a, b) => b.lastDate - a.lastDate).map((t) => t.id);
   return { threads, msgToThread, sortedThreads, counts: computeCounts(threads.values()) };
+}
+
+/** Google Vault names exports "<name>_Export--<address>-<id>.mbox"; each export's account is "me". */
+function vaultOwners(sources: Iterable<Source>): string[] {
+  const out = new Set<string>();
+  for (const src of sources) {
+    const m = /--([^\s/@]+@[^\s/]+?)-[A-Za-z0-9_]+\.mbox$/i.exec(src.name);
+    if (m) out.add(m[1].toLowerCase());
+  }
+  return [...out];
 }
 
 /** Guess which addresses belong to the mailbox owner, for "me" and "to me". */
@@ -165,6 +178,7 @@ export const useStore = create<State>((set, get) => ({
   originalMessageId: null,
   printThreadId: null,
   printMessageId: null,
+  unloadOpen: false,
 
   set: (partial) => set(partial),
 
@@ -178,7 +192,7 @@ export const useStore = create<State>((set, get) => ({
         sources: new Map(sources.map((s) => [s.id, s])),
         messages: msgMap,
         settings: { ...DEFAULT_SETTINGS, ...settings },
-        ...rebuild(msgMap),
+        ...rebuild(msgMap, { ...DEFAULT_SETTINGS, ...settings }.meAddresses),
         version: get().version + 1,
         ready: true,
       });
@@ -208,6 +222,22 @@ export const useStore = create<State>((set, get) => ({
     });
     const w = new Worker(new URL('./lib/mbox/import.worker.ts', import.meta.url), { type: 'module' });
     worker = w;
+    // Let the reader open messages whose extracted copy is still being written.
+    const reads = new Map<number, { resolve: (b: Uint8Array) => void; reject: (e: Error) => void }>();
+    let readSeq = 0;
+    setImportReader(
+      (sourceId, offset, length) =>
+        new Promise((resolve, reject) => {
+          const id = ++readSeq;
+          reads.set(id, { resolve, reject });
+          w.postMessage({ type: 'read', id, sourceId, offset, length } satisfies ImportRequest);
+        }),
+    );
+    const endReads = () => {
+      setImportReader(null);
+      for (const r of reads.values()) r.reject(new Error('import finished'));
+      reads.clear();
+    };
     const pending: MessageMeta[] = [];
     let lastRebuild = 0;
     let imported = 0;
@@ -222,14 +252,21 @@ export const useStore = create<State>((set, get) => ({
       for (const m of pending) messages.set(m.id, m);
       pending.length = 0;
       invalidateSearch();
-      set({ messages, ...rebuild(messages), version: get().version + 1 });
+      set({ messages, ...rebuild(messages, get().settings.meAddresses), version: get().version + 1 });
     };
 
     w.onmessage = (e: MessageEvent<ImportEvent>) => {
       const ev = e.data;
       switch (ev.type) {
+        case 'read-result': {
+          const r = reads.get(ev.id);
+          reads.delete(ev.id);
+          if (r) ev.bytes ? r.resolve(ev.bytes) : r.reject(new Error(ev.error ?? 'read failed'));
+          break;
+        }
         case 'source': {
-          registerSessionFile(ev.source.id, ev.file);
+          refreshSource(ev.source.id);
+          if (ev.file) registerSessionFile(ev.source.id, ev.file);
           const sources = new Map(get().sources);
           sources.set(ev.source.id, ev.source);
           set({ sources });
@@ -243,14 +280,13 @@ export const useStore = create<State>((set, get) => ({
           flushPending(false);
           break;
         case 'progress': {
-          const prior = files.slice(0, ev.fileIndex).reduce((n, f) => n + f.size, 0);
           set({
             importing: {
               fileName: ev.fileName,
               fileIndex: ev.fileIndex,
               fileCount: ev.fileCount,
-              bytesRead: prior + ev.bytesRead,
-              totalBytes,
+              bytesRead: ev.bytesRead,
+              totalBytes: ev.totalBytes,
               messages: imported + ev.messages,
               duplicates: duplicates + ev.duplicates,
             },
@@ -268,6 +304,7 @@ export const useStore = create<State>((set, get) => ({
             break;
           }
           flushPending(true);
+          endReads();
           w.terminate();
           worker = null;
           invalidateSearch();
@@ -281,10 +318,11 @@ export const useStore = create<State>((set, get) => ({
             if (src.complete && src.messageCount === 0 && src.duplicateCount > 0) void get().removeSource(src.id);
           }
           const s = get();
-          if (!s.settings.meAddresses.length) {
-            const me = detectMe(s.messages.values());
-            if (me.length) s.updateSettings({ meAddresses: me });
-          }
+          // Vault owners are certain, so they're always added; otherwise guess only when unknown.
+          const known = s.settings.meAddresses;
+          const vault = vaultOwners(s.sources.values());
+          const me = vault.length ? [...new Set([...known, ...vault])] : known.length ? known : detectMe(s.messages.values());
+          if (me.join() !== known.join()) s.updateSettings({ meAddresses: me });
           const dupText = duplicates ? ` · ${duplicates.toLocaleString()} duplicates skipped` : '';
           // Warnings (skipped zip/non-mail files, storage limits) must outlive the progress card.
           const warnText = s.importWarnings.join(' ');
@@ -305,6 +343,7 @@ export const useStore = create<State>((set, get) => ({
       }
     };
     w.onerror = (e) => {
+      endReads();
       w.terminate();
       worker = null;
       set({ importing: null });
@@ -327,26 +366,37 @@ export const useStore = create<State>((set, get) => ({
     sources.delete(id);
     const messages = new Map([...get().messages].filter(([, m]) => m.sourceId !== id));
     invalidateSearch();
-    set({ sources, messages, ...rebuild(messages), version: get().version + 1, selected: new Set() });
+    set({ sources, messages, ...rebuild(messages, get().settings.meAddresses), version: get().version + 1, selected: new Set() });
   },
 
-  async clearAll() {
+  async clearAll(keepPreferences = false) {
     await stopWorker();
     await db.clearEverything();
     for (const id of get().sources.keys()) forgetSource(id);
     invalidateSearch();
-    try {
-      localStorage.removeItem('mbox-theme');
-    } catch {
-      /* ignore */
+    const prev = get().settings;
+    // The owner and trusted senders belong to the mail being removed; display preferences don't.
+    const settings = keepPreferences ? { ...prev, meAddresses: [], trustedImageSenders: [] } : DEFAULT_SETTINGS;
+    if (keepPreferences) {
+      await db.saveSettings(settings);
+    } else {
+      try {
+        localStorage.removeItem('mbox-theme');
+      } catch {
+        /* ignore */
+      }
     }
     const empty = new Map<string, MessageMeta>();
     set({
       sources: new Map(),
       messages: empty,
-      ...rebuild(empty),
+      ...rebuild(empty, []),
       version: get().version + 1,
-      settings: DEFAULT_SETTINGS,
+      settings,
+      unloadOpen: false,
+      page: 0,
+      cursor: 0,
+      selectAllMatching: false,
       importing: null,
       selected: new Set(),
       settingsOpen: false,
@@ -357,6 +407,8 @@ export const useStore = create<State>((set, get) => ({
   updateSettings(patch) {
     const settings = { ...get().settings, ...patch };
     set({ settings, ...(patch.pageSize ? { page: 0, cursor: 0 } : {}) });
+    // Folder placement of label-less mail depends on who "me" is.
+    if (patch.meAddresses) set({ ...rebuild(get().messages, settings.meAddresses), version: get().version + 1 });
     if (patch.theme) {
       try {
         localStorage.setItem('mbox-theme', patch.theme);
@@ -386,7 +438,7 @@ export const useStore = create<State>((set, get) => ({
     if (!records.length) return;
     for (const tid of touched) {
       const t = threads.get(tid)!;
-      threads.set(tid, summarize(tid, t.messageIds.map((id) => messages.get(id)!)));
+      threads.set(tid, summarize(tid, t.messageIds.map((id) => messages.get(id)!), s.settings.meAddresses));
     }
     set({ messages, threads, counts: computeCounts(threads.values()), version: s.version + 1 });
     void db.saveFlags(records);

@@ -7,11 +7,24 @@ import { toRfc822 } from './mbox/splitter';
  * Files picked during this session. Used when the copy in browser storage is
  * still being written, or when the file couldn't be saved at all.
  */
-const sessionFiles = new Map<string, File>();
+const sessionFiles = new Map<string, Blob>();
 const opfsFiles = new Map<string, File>();
 
-export function registerSessionFile(sourceId: string, file: File) {
+/** Reads from a source whose extracted copy is still being written by the import worker. */
+type ImportReader = (sourceId: string, offset: number, length: number) => Promise<Uint8Array>;
+let importReader: ImportReader | null = null;
+
+export function setImportReader(reader: ImportReader | null) {
+  importReader = reader;
+}
+
+export function registerSessionFile(sourceId: string, file: Blob) {
   sessionFiles.set(sourceId, file);
+  opfsFiles.delete(sourceId);
+}
+
+/** Drop the cached snapshot of a stored file (it changes while being imported). */
+export function refreshSource(sourceId: string) {
   opfsFiles.delete(sourceId);
 }
 
@@ -38,11 +51,22 @@ export async function sourceBlob(source: Source): Promise<Blob> {
     }
     return f;
   }
-  throw new Error(`The file "${source.name}" isn't stored in this browser. Re-open it to read this message.`);
+  throw new Error(
+    source.archive
+      ? `"${source.name}" (from ${source.archive}) isn't stored in this browser. Remove it under Settings → Mailboxes and open the archive again.`
+      : `The file "${source.name}" isn't stored in this browser. Re-open it to read this message.`,
+  );
 }
 
 /** Message bytes exactly as stored in the mbox, including the separator line. */
 export async function readMboxBytes(meta: MessageMeta, source: Source): Promise<Uint8Array> {
+  if (!source.complete && !sessionFiles.has(source.id) && importReader) {
+    try {
+      return await importReader(source.id, meta.offset, meta.length);
+    } catch {
+      /* import finished in the meantime; fall through to the stored file */
+    }
+  }
   const blob = await sourceBlob(source);
   return new Uint8Array(await blob.slice(meta.offset, meta.offset + meta.length).arrayBuffer());
 }
